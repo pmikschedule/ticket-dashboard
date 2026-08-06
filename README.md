@@ -23,6 +23,9 @@
         └──────────────────────┘
 ```
 
+**배포 주소**: <https://pmikschedule.github.io/ticket-dashboard/>
+**저장소**: <https://github.com/pmikschedule/ticket-dashboard>
+
 ## 시작하기
 
 [`docs/SETUP.md`](docs/SETUP.md) — Supabase 생성부터 배포·운영까지 한 번에.

@@ -298,7 +298,7 @@ git init
 git add -A
 git commit -m "초기 구현"
 git branch -M main
-gh repo create ticket-dashboard --public --source=. --remote=origin --push
+gh repo create ticket-dashboard --public --source=. --remote=origin --push   # 완료됨
 ```
 
 > **저장소 이름을 `ticket-dashboard` 가 아닌 것으로 만들었다면**
