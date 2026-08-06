@@ -9,11 +9,12 @@ import {
   CATEGORIES,
   SEVERITIES,
   STATUSES,
-  SYSTEM_TYPES,
+  UNCLASSIFIED_SYSTEM,
+  WORK_TYPES,
   type Category,
   type Severity,
   type Status,
-  type SystemType,
+  type WorkType,
 } from './constants'
 import type { LeadTimeRow } from './types'
 
@@ -22,9 +23,16 @@ export interface CountBucket<K extends string> {
   count: number
 }
 
-export interface LeadTimeSummary {
-  /** 완료된 티켓 수 — 평균·중앙값의 모수입니다. */
-  completed: number
+/** 시스템은 등록표에서 오므로 코드와 표시명을 함께 담습니다. */
+export interface SystemBucket {
+  code: string | null
+  label: string
+  count: number
+}
+
+export interface DurationSummary {
+  /** 이 지표를 낼 수 있었던 티켓 수 — 평균·중앙값의 모수입니다. */
+  samples: number
   averageHours: number | null
   medianHours: number | null
   p90Hours: number | null
@@ -32,20 +40,39 @@ export interface LeadTimeSummary {
   slowestHours: number | null
 }
 
+const EMPTY_SUMMARY: DurationSummary = {
+  samples: 0,
+  averageHours: null,
+  medianHours: null,
+  p90Hours: null,
+  fastestHours: null,
+  slowestHours: null,
+}
+
 export interface DashboardStats {
   total: number
   open: number
   done: number
-  bySystem: CountBucket<SystemType>[]
+  byWorkType: CountBucket<WorkType>[]
+  bySystem: SystemBucket[]
   bySeverity: CountBucket<Severity>[]
   byStatus: CountBucket<Status>[]
   byCategory: CountBucket<Category>[]
-  leadTime: LeadTimeSummary
-  leadTimeBySystem: { key: SystemType; averageHours: number | null; completed: number }[]
+  /** 접수 → 완료. 요청자가 겪은 전체 시간 */
+  leadTime: DurationSummary
+  /** 접수 → 착수. 손대기까지의 대기 (MTTA) — 장애만 */
+  incidentWait: DurationSummary
+  /** 착수 → 완료. 실제 수리 시간 (MTTR) — 장애만 */
+  incidentRepair: DurationSummary
+  leadTimeBySystem: { code: string; label: string; averageHours: number | null; completed: number }[]
   intake: { date: string; count: number }[]
 }
 
-function countBy<K extends string>(rows: LeadTimeRow[], keys: readonly K[], field: keyof LeadTimeRow) {
+function countBy<K extends string>(
+  rows: LeadTimeRow[],
+  keys: readonly K[],
+  field: keyof LeadTimeRow,
+): CountBucket<K>[] {
   const counts = new Map<K, number>(keys.map((k) => [k, 0]))
   for (const row of rows) {
     const value = row[field] as unknown as K
@@ -69,27 +96,18 @@ export function median(values: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
-export function summarizeLeadTime(rows: LeadTimeRow[]): LeadTimeSummary {
-  const hours = rows
-    .map((row) => row.lead_time_hours)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0)
-
-  if (hours.length === 0) {
-    return {
-      completed: 0,
-      averageHours: null,
-      medianHours: null,
-      p90Hours: null,
-      fastestHours: null,
-      slowestHours: null,
-    }
-  }
+/** 시간 배열 하나를 요약합니다. 음수·비유한값은 제외합니다. */
+export function summarizeDurations(values: (number | null)[]): DurationSummary {
+  const hours = values.filter(
+    (value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0,
+  )
+  if (hours.length === 0) return { ...EMPTY_SUMMARY }
 
   const sorted = [...hours].sort((a, b) => a - b)
   const total = sorted.reduce((sum, value) => sum + value, 0)
 
   return {
-    completed: sorted.length,
+    samples: sorted.length,
     averageHours: total / sorted.length,
     medianHours: median(sorted),
     p90Hours: percentile(sorted, 0.9),
@@ -98,11 +116,56 @@ export function summarizeLeadTime(rows: LeadTimeRow[]): LeadTimeSummary {
   }
 }
 
+export function summarizeLeadTime(rows: LeadTimeRow[]): DurationSummary {
+  return summarizeDurations(rows.map((row) => row.lead_time_hours))
+}
+
+/**
+ * 시스템별 건수.
+ *
+ * 등록표에 없는 코드와 null 은 '미분류' 하나로 모읍니다 — 시스템을 지운 뒤에도
+ * 과거 티켓이 사라지지 않고, 대신 미분류로 드러납니다.
+ */
+export function countBySystem(
+  rows: LeadTimeRow[],
+  systems: { code: string; name: string }[],
+): SystemBucket[] {
+  const labels = new Map(systems.map((s) => [s.code, s.name]))
+  const counts = new Map<string, number>(systems.map((s) => [s.code, 0]))
+  let unclassified = 0
+
+  for (const row of rows) {
+    const code = row.system_type
+    if (code && counts.has(code)) counts.set(code, (counts.get(code) ?? 0) + 1)
+    else unclassified += 1
+  }
+
+  const buckets: SystemBucket[] = systems.map((s) => ({
+    code: s.code,
+    label: labels.get(s.code) ?? s.code,
+    count: counts.get(s.code) ?? 0,
+  }))
+
+  // 미분류는 0건이면 굳이 보여주지 않습니다. 있으면 반드시 보여줍니다.
+  if (unclassified > 0) {
+    buckets.push({ code: null, label: UNCLASSIFIED_SYSTEM, count: unclassified })
+  }
+  return buckets
+}
+
 /** 시스템별 평균 리드타임. 완료 건이 없는 시스템은 null 로 남깁니다. */
-export function leadTimeBySystem(rows: LeadTimeRow[]) {
-  return SYSTEM_TYPES.map((key) => {
-    const summary = summarizeLeadTime(rows.filter((row) => row.system_type === key))
-    return { key, averageHours: summary.averageHours, completed: summary.completed }
+export function leadTimeBySystem(
+  rows: LeadTimeRow[],
+  systems: { code: string; name: string }[],
+) {
+  return systems.map((system) => {
+    const summary = summarizeLeadTime(rows.filter((row) => row.system_type === system.code))
+    return {
+      code: system.code,
+      label: system.name,
+      averageHours: summary.averageHours,
+      completed: summary.samples,
+    }
   })
 }
 
@@ -123,19 +186,28 @@ export function intakeTrend(rows: LeadTimeRow[], days = 14, today: Date = new Da
   return [...buckets.entries()].map(([date, count]) => ({ date, count }))
 }
 
-export function buildDashboardStats(rows: LeadTimeRow[], today: Date = new Date()): DashboardStats {
+export function buildDashboardStats(
+  rows: LeadTimeRow[],
+  systems: { code: string; name: string }[] = [],
+  today: Date = new Date(),
+): DashboardStats {
   const done = rows.filter((row) => row.status === 'done').length
+  // MTTA/MTTR 은 장애만 대상으로 합니다. 신규개발과 섞으면 평균이 무의미해집니다.
+  const incidents = rows.filter((row) => row.work_type === 'incident')
 
   return {
     total: rows.length,
     open: rows.length - done,
     done,
-    bySystem: countBy(rows, SYSTEM_TYPES, 'system_type'),
+    byWorkType: countBy(rows, WORK_TYPES, 'work_type'),
+    bySystem: countBySystem(rows, systems),
     bySeverity: countBy(rows, SEVERITIES, 'severity'),
     byStatus: countBy(rows, STATUSES, 'status'),
     byCategory: countBy(rows, CATEGORIES, 'category'),
     leadTime: summarizeLeadTime(rows),
-    leadTimeBySystem: leadTimeBySystem(rows),
+    incidentWait: summarizeDurations(incidents.map((row) => row.wait_hours)),
+    incidentRepair: summarizeDurations(incidents.map((row) => row.repair_hours)),
+    leadTimeBySystem: leadTimeBySystem(rows, systems),
     intake: intakeTrend(rows, 14, today),
   }
 }

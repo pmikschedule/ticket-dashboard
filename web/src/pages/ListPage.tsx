@@ -8,15 +8,17 @@ import {
   SeverityBadge,
   StatusBadge,
   SystemBadge,
+  WorkTypeBadge,
 } from '../components/Badge'
 import Filters from '../components/Filters'
-import { useTickets, useUsers } from '../hooks/queries'
+import { useSystemLabels, useTickets, useUsers } from '../hooks/queries'
 import { formatDate, relativeDays } from '../lib/format'
 import type { TicketFilters } from '../lib/types'
 import { isOverdue } from '../lib/workflow'
 
 /** 리스트 뷰. 칸반이 못 보여주는 밀도가 필요할 때 씁니다. */
 export default function ListPage() {
+  const systemLabel = useSystemLabels()
   const [filters, setFilters] = useState<TicketFilters>({})
   const { data: tickets = [], isLoading, error } = useTickets(filters)
   const { data: users = [] } = useUsers()
@@ -88,9 +90,12 @@ export default function ListPage() {
                   </td>
                   <td className="px-3 py-2">
                     <div className="flex flex-wrap gap-1">
+                      {meta && <WorkTypeBadge workType={meta.work_type} />}
                       {meta && <SeverityBadge severity={meta.severity} />}
                       {meta && <CategoryBadge category={meta.category} />}
-                      {meta && <SystemBadge systemType={meta.system_type} />}
+                      {meta && (
+                        <SystemBadge code={meta.system_type} label={systemLabel(meta.system_type)} />
+                      )}
                     </div>
                   </td>
                   <td className="px-3 py-2 text-slate-600">

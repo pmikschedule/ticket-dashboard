@@ -12,6 +12,11 @@ export const keys = {
   outbound: (id: number) => ['outbound', id] as const,
   users: ['users'] as const,
   leadTimes: ['lead-times'] as const,
+  systems: ['systems'] as const,
+  allSystems: ['systems', 'all'] as const,
+  intakeRules: ['intake-rules'] as const,
+  settings: ['settings'] as const,
+  scans: (filters: api.ScanFilters) => ['scans', filters] as const,
 }
 
 export function useTickets(filters: TicketFilters) {
@@ -66,6 +71,138 @@ function invalidateTicket(queryClient: ReturnType<typeof useQueryClient>, ticket
   void queryClient.invalidateQueries({ queryKey: keys.leadTimes })
 }
 
+// ── 시스템 등록표 ────────────────────────────────────────────────────────────
+
+export function useSystems() {
+  return useQuery({ queryKey: keys.systems, queryFn: api.fetchSystems, staleTime: 300_000 })
+}
+
+export function useAllSystems() {
+  return useQuery({ queryKey: keys.allSystems, queryFn: api.fetchAllSystems })
+}
+
+/**
+ * 코드 → 표시명 매핑.
+ *
+ * 등록표에 없는 코드는 undefined 를 돌려주고, 화면은 '미분류' 로 표시합니다.
+ * 시스템을 지운 뒤에도 과거 티켓이 사라지지 않게 하려는 의도된 동작입니다.
+ */
+export function useSystemLabels(): (code: string | null | undefined) => string | undefined {
+  const { data: systems = [] } = useSystems()
+  const map = new Map(systems.map((s) => [s.code, s.name]))
+  return (code) => (code ? map.get(code) : undefined)
+}
+
+function invalidateSystems(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: ['systems'] })
+}
+
+export function useCreateSystem() {
+  const queryClient = useQueryClient()
+  return useMutation({ mutationFn: api.createSystem, onSuccess: () => invalidateSystems(queryClient) })
+}
+
+export function useUpdateSystem() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: Parameters<typeof api.updateSystem>[1] }) =>
+      api.updateSystem(id, patch),
+    onSuccess: () => invalidateSystems(queryClient),
+  })
+}
+
+export function useDeleteSystem() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.deleteSystem(id),
+    onSuccess: () => invalidateSystems(queryClient),
+  })
+}
+
+// ── 접수 판정 기준 ───────────────────────────────────────────────────────────
+
+export function useIntakeRules() {
+  return useQuery({ queryKey: keys.intakeRules, queryFn: api.fetchIntakeRules })
+}
+
+function invalidateRules(queryClient: ReturnType<typeof useQueryClient>) {
+  void queryClient.invalidateQueries({ queryKey: keys.intakeRules })
+}
+
+export function useCreateIntakeRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.createIntakeRule,
+    onSuccess: () => invalidateRules(queryClient),
+  })
+}
+
+export function useUpdateIntakeRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, patch }: { id: number; patch: Parameters<typeof api.updateIntakeRule>[1] }) =>
+      api.updateIntakeRule(id, patch),
+    onSuccess: () => invalidateRules(queryClient),
+  })
+}
+
+export function useDeleteIntakeRule() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => api.deleteIntakeRule(id),
+    onSuccess: () => invalidateRules(queryClient),
+  })
+}
+
+// ── 설정 ─────────────────────────────────────────────────────────────────────
+
+export function useSettings() {
+  return useQuery({ queryKey: keys.settings, queryFn: api.fetchSettings })
+}
+
+export function useUpdateSetting() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) => api.updateSetting(key, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.settings }),
+  })
+}
+
+// ── 메일 스크리닝 ────────────────────────────────────────────────────────────
+
+export function useScannedMails(filters: api.ScanFilters) {
+  return useQuery({ queryKey: keys.scans(filters), queryFn: () => api.fetchScannedMails(filters) })
+}
+
+export function useMarkReviewed() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, userId, note }: { id: number; userId: string; note?: string }) =>
+      api.markScanReviewed(id, userId, note),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scans'] }),
+  })
+}
+
+export function useConvertScanToTicket() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      scan,
+      userId,
+      overrides,
+    }: {
+      scan: Parameters<typeof api.convertScanToTicket>[0]
+      userId: string
+      overrides?: Parameters<typeof api.convertScanToTicket>[2]
+    }) => api.convertScanToTicket(scan, userId, overrides),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['scans'] })
+      void queryClient.invalidateQueries({ queryKey: ['tickets'] })
+      void queryClient.invalidateQueries({ queryKey: keys.leadTimes })
+    },
+  })
+}
+
 export function useUpdateStatus() {
   const queryClient = useQueryClient()
   return useMutation({
@@ -83,7 +220,17 @@ export function useUpdateMeta() {
       patch,
     }: {
       ticketId: number
-      patch: Partial<Pick<TicketMeta, 'category' | 'severity' | 'system_type' | 'assignee_id'>>
+      patch: Partial<
+        Pick<
+          TicketMeta,
+          | 'work_type'
+          | 'category'
+          | 'severity'
+          | 'system_type'
+          | 'assignee_id'
+          | 'estimated_days'
+        >
+      >
     }) => api.updateTicketMeta(ticketId, patch),
     onSuccess: (_data, variables) => invalidateTicket(queryClient, variables.ticketId),
   })

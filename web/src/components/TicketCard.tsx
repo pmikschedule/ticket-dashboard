@@ -3,12 +3,14 @@ import { Link } from 'react-router-dom'
 import { formatDate, relativeDays } from '../lib/format'
 import type { TicketWithMeta } from '../lib/types'
 import { isOverdue } from '../lib/workflow'
+import { useSystemLabels } from '../hooks/queries'
 import {
   CategoryBadge,
   ClassifyErrorBadge,
   OverdueBadge,
   SeverityBadge,
   SystemBadge,
+  WorkTypeBadge,
 } from './Badge'
 
 interface Props {
@@ -23,6 +25,7 @@ interface Props {
  * 제목 · 요청자명 · 장애 등급 · 시스템 구분 · 최초 접수일 · 요청 기한.
  */
 export default function TicketCard({ ticket, assigneeName, draggable, onDragStart }: Props) {
+  const systemLabel = useSystemLabels()
   const meta = ticket.ticket_meta
   const overdue = isOverdue(ticket.due_date, meta?.status)
 
@@ -34,9 +37,12 @@ export default function TicketCard({ ticket, assigneeName, draggable, onDragStar
       className="card block space-y-2 p-3 transition hover:border-slate-400 hover:shadow"
     >
       <div className="flex flex-wrap items-center gap-1">
+        {meta && <WorkTypeBadge workType={meta.work_type} />}
         {meta && <SeverityBadge severity={meta.severity} />}
         {meta && <CategoryBadge category={meta.category} />}
-        {meta && <SystemBadge systemType={meta.system_type} />}
+        {meta && (
+          <SystemBadge code={meta.system_type} label={systemLabel(meta.system_type)} />
+        )}
         {overdue && <OverdueBadge />}
         {meta?.llm_error && <ClassifyErrorBadge error={meta.llm_error} />}
       </div>

@@ -28,11 +28,15 @@ const inactiveAdmin: AppUser = { ...admin, id: 'admin-2', is_active: false }
 function meta(overrides: Partial<TicketMeta> = {}): TicketMeta {
   return {
     ticket_id: 1,
+    work_type: 'maintenance',
     category: 'error',
     severity: 'high',
     system_type: 'erp',
     status: 'in_progress',
     assignee_id: null,
+    estimated_days: null,
+    promoted_at: null,
+    promoted_by: null,
     llm_model: null,
     llm_confidence: null,
     llm_reason: null,

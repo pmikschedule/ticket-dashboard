@@ -8,6 +8,7 @@ import {
   SeverityBadge,
   StatusBadge,
   SystemBadge,
+  WorkTypeBadge,
 } from '../components/Badge'
 import ReplyPanel from '../components/ReplyPanel'
 import { useAuth } from '../hooks/useAuth'
@@ -21,6 +22,8 @@ import {
   useTicket,
   useUpdateMeta,
   useUpdateStatus,
+  useSystemLabels,
+  useSystems,
   useUpdateTicketFields,
   useUsers,
 } from '../hooks/queries'
@@ -31,8 +34,9 @@ import {
   SEVERITIES,
   SEVERITY_LABELS,
   STATUS_LABELS,
-  SYSTEM_TYPES,
-  SYSTEM_TYPE_LABELS,
+  UNCLASSIFIED_SYSTEM,
+  WORK_TYPES,
+  WORK_TYPE_LABELS,
   type Status,
 } from '../lib/constants'
 import { formatBytes, formatDate, formatDateTime } from '../lib/format'
@@ -46,6 +50,8 @@ export default function TicketDetailPage() {
 
   const { data: ticket, isLoading, error } = useTicket(ticketId)
   const { data: users = [] } = useUsers()
+  const { data: systems = [] } = useSystems()
+  const systemLabel = useSystemLabels()
   const { data: comments = [] } = useComments(ticketId)
   const { data: attachments = [] } = useAttachments(ticketId)
   const { data: history = [] } = useStatusHistory(ticketId)
@@ -122,9 +128,12 @@ export default function TicketDetailPage() {
         <div className="space-y-4 lg:col-span-2">
           <section className="card p-5">
             <div className="mb-2 flex flex-wrap items-center gap-1.5">
+              {meta && <WorkTypeBadge workType={meta.work_type} />}
               {meta && <SeverityBadge severity={meta.severity} />}
               {meta && <CategoryBadge category={meta.category} />}
-              {meta && <SystemBadge systemType={meta.system_type} />}
+              {meta && (
+                <SystemBadge code={meta.system_type} label={systemLabel(meta.system_type)} />
+              )}
               {overdue && <OverdueBadge />}
               {meta?.llm_error && <ClassifyErrorBadge error={meta.llm_error} />}
             </div>
@@ -382,6 +391,63 @@ export default function TicketDetailPage() {
             </div>
 
             <div>
+              <label className="label" htmlFor="work-type">
+                대분류
+              </label>
+              <select
+                id="work-type"
+                className="field"
+                disabled={!editable}
+                value={meta?.work_type ?? 'maintenance'}
+                onChange={(event) =>
+                  updateMeta.mutate(
+                    { ticketId: ticket.id, patch: { work_type: event.target.value as never } },
+                    { onError: fail },
+                  )
+                }
+              >
+                {WORK_TYPES.map((workType) => (
+                  <option key={workType} value={workType}>
+                    {WORK_TYPE_LABELS[workType]}
+                  </option>
+                ))}
+              </select>
+              {meta?.promoted_at && (
+                <p className="mt-1 text-[11px] text-violet-700">
+                  신규개발 승격: {formatDateTime(meta.promoted_at)}
+                </p>
+              )}
+              <p className="mt-1 text-[11px] text-slate-400">
+                공수 1주일 이상이면 신규개발로 올립니다. LLM 은 장애/유지보수만 판단합니다.
+              </p>
+            </div>
+
+            <div>
+              <label className="label" htmlFor="estimated-days">
+                예상 공수 (사람일)
+              </label>
+              <input
+                id="estimated-days"
+                type="number"
+                min={0}
+                step={0.5}
+                className="field"
+                disabled={!editable}
+                defaultValue={meta?.estimated_days ?? ''}
+                onBlur={(event) => {
+                  const raw = event.target.value.trim()
+                  const next = raw === '' ? null : Number(raw)
+                  if (next !== null && !Number.isFinite(next)) return
+                  if (next === (meta?.estimated_days ?? null)) return
+                  updateMeta.mutate(
+                    { ticketId: ticket.id, patch: { estimated_days: next } },
+                    { onError: fail },
+                  )
+                }}
+              />
+            </div>
+
+            <div>
               <label className="label" htmlFor="severity">
                 장애 등급
               </label>
@@ -437,20 +503,33 @@ export default function TicketDetailPage() {
                 id="system-type"
                 className="field"
                 disabled={!editable}
-                value={meta?.system_type ?? 'etc'}
+                value={meta?.system_type ?? ''}
                 onChange={(event) =>
                   updateMeta.mutate(
-                    { ticketId: ticket.id, patch: { system_type: event.target.value as never } },
+                    {
+                      ticketId: ticket.id,
+                      patch: { system_type: event.target.value || null },
+                    },
                     { onError: fail },
                   )
                 }
               >
-                {SYSTEM_TYPES.map((systemType) => (
-                  <option key={systemType} value={systemType}>
-                    {SYSTEM_TYPE_LABELS[systemType]}
+                <option value="">{UNCLASSIFIED_SYSTEM}</option>
+                {systems.map((system) => (
+                  <option key={system.code} value={system.code}>
+                    {system.name}
                   </option>
                 ))}
+                {/* 등록표에서 지워진 코드도 선택지로 남겨 값이 조용히 바뀌지 않게 합니다 */}
+                {meta?.system_type && !systems.some((s) => s.code === meta.system_type) && (
+                  <option value={meta.system_type}>{meta.system_type} (등록표에 없음)</option>
+                )}
               </select>
+              {systems.length === 0 && (
+                <p className="mt-1 text-[11px] text-amber-600">
+                  등록된 시스템이 없습니다. 설정 화면에서 먼저 등록하세요.
+                </p>
+              )}
             </div>
 
             {meta && (meta.llm_reason || meta.llm_error) && (

@@ -10,11 +10,12 @@ import {
   CATEGORY_LABELS,
   SEVERITY_LABELS,
   STATUS_LABELS,
-  SYSTEM_TYPE_LABELS,
+  UNCLASSIFIED_SYSTEM,
+  WORK_TYPE_LABELS,
   type Category,
   type Severity,
   type Status,
-  type SystemType,
+  type WorkType,
 } from './constants'
 import { formatDate, formatHours } from './format'
 import type { Comment, Ticket, TicketMeta } from './types'
@@ -38,9 +39,17 @@ function label<K extends string>(map: Record<K, string>, key: K | null | undefin
 
 export function buildReplyBody(
   ticket: Pick<Ticket, 'subject' | 'reporter_name' | 'received_at'>,
-  meta: Pick<TicketMeta, 'category' | 'severity' | 'system_type' | 'status' | 'completed_at'> | null,
+  meta: Pick<
+    TicketMeta,
+    'work_type' | 'category' | 'severity' | 'system_type' | 'status' | 'completed_at'
+  > | null,
   comments: Pick<Comment, 'content'>[] = [],
   signature = 'IT 운영팀 드림',
+  /**
+   * 시스템 표시명. 등록표(systems)에서 찾아 넘깁니다.
+   * 주지 않으면 코드값을, 그것도 없으면 '미분류' 를 씁니다.
+   */
+  systemLabel?: string | null,
 ): string {
   const reporter = (ticket.reporter_name ?? '').trim()
   const greeting = reporter ? `${reporter}님, 안녕하세요.` : '안녕하세요.'
@@ -54,9 +63,10 @@ export function buildReplyBody(
     '■ 요청 내용',
     `  · 제목      : ${ticket.subject || '-'}`,
     `  · 접수일    : ${formatDate(ticket.received_at)}`,
-    `  · 유형      : ${label(CATEGORY_LABELS, meta?.category as Category)}` +
+    `  · 유형      : ${label(WORK_TYPE_LABELS, meta?.work_type as WorkType)}` +
+      ` / ${label(CATEGORY_LABELS, meta?.category as Category)}` +
       ` / ${label(SEVERITY_LABELS, meta?.severity as Severity)}`,
-    `  · 대상 시스템: ${label(SYSTEM_TYPE_LABELS, meta?.system_type as SystemType)}`,
+    `  · 대상 시스템: ${systemLabel || meta?.system_type || UNCLASSIFIED_SYSTEM}`,
     `  · 처리 상태  : ${label(STATUS_LABELS, meta?.status as Status)}`,
     `  · 완료일    : ${formatDate(meta?.completed_at)} (소요 ${formatHours(hours)})`,
   ]

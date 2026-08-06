@@ -6,7 +6,13 @@ import { ROLE_LABELS } from '../lib/constants'
 const NAV = [
   { to: '/', label: '보드', end: true },
   { to: '/list', label: '목록', end: false },
+  { to: '/screening', label: '스크리닝', end: false },
   { to: '/stats', label: '통계', end: false },
+]
+
+const ADMIN_NAV = [
+  { to: '/settings', label: '설정' },
+  { to: '/admin', label: '사용자' },
 ]
 
 export default function Layout() {
@@ -35,20 +41,22 @@ export default function Layout() {
                 {item.label}
               </NavLink>
             ))}
-            {isAdmin && (
-              <NavLink
-                to="/admin"
-                className={({ isActive }) =>
-                  `rounded-md px-3 py-1.5 text-sm transition ${
-                    isActive
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
-                  }`
-                }
-              >
-                사용자
-              </NavLink>
-            )}
+            {isAdmin &&
+              ADMIN_NAV.map((item) => (
+                <NavLink
+                  key={item.to}
+                  to={item.to}
+                  className={({ isActive }) =>
+                    `rounded-md px-3 py-1.5 text-sm transition ${
+                      isActive
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                    }`
+                  }
+                >
+                  {item.label}
+                </NavLink>
+              ))}
           </nav>
 
           <div className="ml-auto flex items-center gap-3 text-sm">

@@ -4,11 +4,13 @@ import {
   SEVERITY_STYLE,
   STATUS_ACCENT,
   STATUS_LABELS,
-  SYSTEM_TYPE_LABELS,
+  UNCLASSIFIED_SYSTEM,
+  WORK_TYPE_LABELS,
+  WORK_TYPE_STYLE,
   type Category,
   type Severity,
   type Status,
-  type SystemType,
+  type WorkType,
 } from '../lib/constants'
 
 export function SeverityBadge({ severity }: { severity: Severity }) {
@@ -30,10 +32,33 @@ export function StatusBadge({ status }: { status: Status }) {
   )
 }
 
-export function SystemBadge({ systemType }: { systemType: SystemType }) {
+/**
+ * 시스템 배지.
+ *
+ * 표시명은 등록표에서 찾아 넘깁니다. 등록표에 없는 코드(시스템을 지운 뒤의
+ * 과거 티켓)는 '미분류' 로 보이되, 원래 코드를 툴팁으로 남겨 추적할 수 있게 합니다.
+ */
+export function SystemBadge({ code, label }: { code: string | null; label?: string | null }) {
+  const unclassified = !label
   return (
-    <span className="inline-flex items-center rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-600">
-      {SYSTEM_TYPE_LABELS[systemType]}
+    <span
+      title={code && unclassified ? `등록표에 없는 코드: ${code}` : undefined}
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium ${
+        unclassified ? 'bg-slate-50 text-slate-400' : 'bg-slate-100 text-slate-600'
+      }`}
+    >
+      {label || UNCLASSIFIED_SYSTEM}
+    </span>
+  )
+}
+
+/** 대분류 배지. 장애·유지보수·신규개발은 관리 방식이 달라 눈에 먼저 들어와야 합니다. */
+export function WorkTypeBadge({ workType }: { workType: WorkType }) {
+  return (
+    <span
+      className={`inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-semibold ring-1 ring-inset ${WORK_TYPE_STYLE[workType]}`}
+    >
+      {WORK_TYPE_LABELS[workType]}
     </span>
   )
 }

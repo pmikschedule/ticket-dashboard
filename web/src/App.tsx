@@ -5,6 +5,8 @@ import { useAuth } from './hooks/useAuth'
 import AdminPage from './pages/AdminPage'
 import BoardPage from './pages/BoardPage'
 import ListPage from './pages/ListPage'
+import ScreeningPage from './pages/ScreeningPage'
+import SettingsPage from './pages/SettingsPage'
 import LoginPage from './pages/LoginPage'
 import StatsPage from './pages/StatsPage'
 import TicketDetailPage from './pages/TicketDetailPage'
@@ -39,6 +41,8 @@ export default function App() {
         <Route index element={<BoardPage />} />
         <Route path="list" element={<ListPage />} />
         <Route path="stats" element={<StatsPage />} />
+        <Route path="screening" element={<ScreeningPage />} />
+        <Route path="settings" element={<SettingsPage />} />
         <Route path="tickets/:id" element={<TicketDetailPage />} />
         {/* 화면 숨김은 편의일 뿐이고, 실제 차단은 RLS 가 합니다. */}
         <Route path="admin" element={isAdmin ? <AdminPage /> : <Navigate to="/" replace />} />

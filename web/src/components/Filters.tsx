@@ -1,13 +1,15 @@
+import { useSystems } from '../hooks/queries'
 import {
   SEVERITIES,
   SEVERITY_LABELS,
   STATUSES,
   STATUS_LABELS,
-  SYSTEM_TYPES,
-  SYSTEM_TYPE_LABELS,
+  UNCLASSIFIED_SYSTEM,
+  WORK_TYPES,
+  WORK_TYPE_LABELS,
   type Severity,
   type Status,
-  type SystemType,
+  type WorkType,
 } from '../lib/constants'
 import type { AppUser, TicketFilters } from '../lib/types'
 
@@ -21,12 +23,15 @@ interface Props {
 
 /** 필터는 차트·목록 위 한 줄에 모읍니다. */
 export default function Filters({ value, onChange, users, showStatus = true }: Props) {
+  const { data: systems = [] } = useSystems()
+
   function set<K extends keyof TicketFilters>(key: K, next: TicketFilters[K]) {
     onChange({ ...value, [key]: next })
   }
 
   const isFiltered =
     (value.status && value.status !== 'all') ||
+    (value.workType && value.workType !== 'all') ||
     (value.severity && value.severity !== 'all') ||
     (value.systemType && value.systemType !== 'all') ||
     (value.assigneeId && value.assigneeId !== 'all') ||
@@ -70,6 +75,25 @@ export default function Filters({ value, onChange, users, showStatus = true }: P
       )}
 
       <div>
+        <label className="label" htmlFor="filter-work-type">
+          대분류
+        </label>
+        <select
+          id="filter-work-type"
+          className="field"
+          value={value.workType ?? 'all'}
+          onChange={(event) => set('workType', event.target.value as WorkType | 'all')}
+        >
+          <option value="all">전체</option>
+          {WORK_TYPES.map((workType) => (
+            <option key={workType} value={workType}>
+              {WORK_TYPE_LABELS[workType]}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <div>
         <label className="label" htmlFor="filter-severity">
           등급
         </label>
@@ -96,12 +120,13 @@ export default function Filters({ value, onChange, users, showStatus = true }: P
           id="filter-system"
           className="field"
           value={value.systemType ?? 'all'}
-          onChange={(event) => set('systemType', event.target.value as SystemType | 'all')}
+          onChange={(event) => set('systemType', event.target.value)}
         >
           <option value="all">전체</option>
-          {SYSTEM_TYPES.map((systemType) => (
-            <option key={systemType} value={systemType}>
-              {SYSTEM_TYPE_LABELS[systemType]}
+          <option value="unclassified">{UNCLASSIFIED_SYSTEM}</option>
+          {systems.map((system) => (
+            <option key={system.code} value={system.code}>
+              {system.name}
             </option>
           ))}
         </select>

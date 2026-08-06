@@ -74,6 +74,38 @@ export const CHART_INK = {
   muted: '#64748b',
 } as const
 
+/**
+ * 대분류. 라이프사이클 6단계는 셋 다 동일하고 관리 방식만 갈립니다.
+ *
+ *  incident    장애      — MTTR 측정 대상
+ *  maintenance 유지보수  — 단순 수정·개선. 주간 현황 대상
+ *  development 신규개발  — 공수 1주일 이상. 관리자가 수동 승격. Gantt 대상
+ *
+ * LLM 은 앞의 둘만 고릅니다. 공수 판단에 필요한 정보가 메일에 없기 때문입니다.
+ */
+export const WORK_TYPES = ['incident', 'maintenance', 'development'] as const
+export type WorkType = (typeof WORK_TYPES)[number]
+
+export const WORK_TYPE_LABELS: Record<WorkType, string> = {
+  incident: '장애',
+  maintenance: '유지보수',
+  development: '신규개발',
+}
+
+export const WORK_TYPE_STYLE: Record<WorkType, string> = {
+  incident: 'bg-rose-50 text-rose-700 ring-rose-200',
+  maintenance: 'bg-sky-50 text-sky-700 ring-sky-200',
+  development: 'bg-violet-50 text-violet-700 ring-violet-200',
+}
+
+/** 대분류별 차트 색. 순서가 아니라 종류라서 라벨이 항목을 구분합니다. */
+export const WORK_TYPE_RAMP: Record<WorkType, string> = {
+  incident: '#0d366b',
+  maintenance: '#2a78d6',
+  development: '#86b6ef',
+}
+
+/** 중분류 */
 export const CATEGORIES = ['error', 'improve', 'fix', 'new'] as const
 export type Category = (typeof CATEGORIES)[number]
 
@@ -84,15 +116,32 @@ export const CATEGORY_LABELS: Record<Category, string> = {
   new: '신규',
 }
 
-export const SYSTEM_TYPES = ['erp', 'api', 'web_app', 'infra', 'etc'] as const
-export type SystemType = (typeof SYSTEM_TYPES)[number]
+/**
+ * 시스템 종류는 **하드코딩하지 않습니다.**
+ * public.systems 등록표를 운영자가 설정 화면에서 관리합니다.
+ * 코드는 자유 문자열이고, 등록되지 않은 값은 화면에서 '미분류' 로 보입니다.
+ */
+export type SystemCode = string
 
-export const SYSTEM_TYPE_LABELS: Record<SystemType, string> = {
-  erp: 'ERP',
-  api: '연동 API',
-  web_app: '사내 웹/앱',
-  infra: '인프라',
-  etc: '기타',
+/** 미분류 표시 문구. null 이거나 등록표에 없는 코드일 때 씁니다. */
+export const UNCLASSIFIED_SYSTEM = '미분류'
+
+/** 접수 판정 기준의 종류 */
+export const RULE_KINDS = ['include', 'exclude'] as const
+export type RuleKind = (typeof RULE_KINDS)[number]
+
+export const RULE_KIND_LABELS: Record<RuleKind, string> = {
+  include: '접수 대상',
+  exclude: '제외 대상',
+}
+
+/** 스캔한 메일의 처리 결과 */
+export const SCAN_OUTCOMES = ['ticketed', 'excluded'] as const
+export type ScanOutcome = (typeof SCAN_OUTCOMES)[number]
+
+export const SCAN_OUTCOME_LABELS: Record<ScanOutcome, string> = {
+  ticketed: '티켓 생성됨',
+  excluded: '제외됨',
 }
 
 export const ROLES = ['admin', 'member'] as const

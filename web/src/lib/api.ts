@@ -7,12 +7,16 @@
 
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
+  AppSetting,
   AppUser,
   AttachmentRow,
   Comment,
   LeadTimeRow,
   OutboundEmailRow,
+  IntakeRule,
+  ScannedMail,
   StatusHistoryRow,
+  SystemRow,
   TicketFilters,
   TicketMeta,
   TicketWithMeta,
@@ -129,10 +133,15 @@ export async function fetchTickets(filters: TicketFilters = {}): Promise<TicketW
   if (filters.status && filters.status !== 'all') {
     query = query.eq('ticket_meta.status', filters.status)
   }
+  if (filters.workType && filters.workType !== 'all') {
+    query = query.eq('ticket_meta.work_type', filters.workType)
+  }
   if (filters.severity && filters.severity !== 'all') {
     query = query.eq('ticket_meta.severity', filters.severity)
   }
-  if (filters.systemType && filters.systemType !== 'all') {
+  if (filters.systemType === 'unclassified') {
+    query = query.is('ticket_meta.system_type', null)
+  } else if (filters.systemType && filters.systemType !== 'all') {
     query = query.eq('ticket_meta.system_type', filters.systemType)
   }
   if (filters.assigneeId === 'unassigned') {
@@ -163,7 +172,12 @@ export async function updateTicketStatus(ticketId: number, status: string): Prom
 
 export async function updateTicketMeta(
   ticketId: number,
-  patch: Partial<Pick<TicketMeta, 'category' | 'severity' | 'system_type' | 'assignee_id'>>,
+  patch: Partial<
+    Pick<
+      TicketMeta,
+      'work_type' | 'category' | 'severity' | 'system_type' | 'assignee_id' | 'estimated_days'
+    >
+  >,
 ): Promise<void> {
   const { error } = await supabase.from('ticket_meta').update(patch).eq('ticket_id', ticketId)
   if (error) throw new Error(error.message)
@@ -172,7 +186,13 @@ export async function updateTicketMeta(
 /** 관리자 수동 내용 보완 (기획서 3.2). */
 export async function updateTicketFields(
   ticketId: number,
-  patch: { subject?: string; description?: string; due_date?: string | null },
+  patch: {
+    subject?: string
+    description?: string
+    due_date?: string | null
+    planned_start_date?: string | null
+    planned_end_date?: string | null
+  },
 ): Promise<void> {
   const { error } = await supabase.from('tickets').update(patch).eq('id', ticketId)
   if (error) throw new Error(error.message)
@@ -284,4 +304,222 @@ export async function cancelQueuedReply(emailId: number): Promise<void> {
     .update({ status: 'cancelled' })
     .eq('id', emailId)
   if (error) throw new Error(error.message)
+}
+
+// ── 시스템 종류 등록표 ───────────────────────────────────────────────────────
+
+/** 활성 시스템만. 분류 선택지와 차트 축에 씁니다. */
+export async function fetchSystems(): Promise<SystemRow[]> {
+  return unwrap(
+    await supabase
+      .from('systems')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order')
+      .order('code'),
+  ) as SystemRow[]
+}
+
+/** 비활성 포함 전부. 설정 화면에서만 씁니다. */
+export async function fetchAllSystems(): Promise<SystemRow[]> {
+  return unwrap(
+    await supabase.from('systems').select('*').order('sort_order').order('code'),
+  ) as SystemRow[]
+}
+
+export async function createSystem(input: {
+  code: string
+  name: string
+  description?: string | null
+  sortOrder?: number
+}): Promise<void> {
+  const { error } = await supabase.from('systems').insert({
+    code: input.code.trim().toLowerCase(),
+    name: input.name.trim(),
+    description: input.description?.trim() || null,
+    sort_order: input.sortOrder ?? 0,
+  })
+  if (error) {
+    if (error.message.includes('duplicate') || error.code === '23505') {
+      throw new Error(`이미 등록된 코드입니다: ${input.code}`)
+    }
+    throw new Error(error.message)
+  }
+}
+
+export async function updateSystem(
+  id: number,
+  patch: Partial<Pick<SystemRow, 'name' | 'description' | 'sort_order' | 'is_active'>>,
+): Promise<void> {
+  const { error } = await supabase.from('systems').update(patch).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * 시스템 삭제.
+ *
+ * 과거 티켓의 system_type 은 외래키가 아니라 그대로 남고, 화면에서는 미분류로 보입니다.
+ * 이력을 지우지 않기 위한 의도된 동작입니다.
+ */
+export async function deleteSystem(id: number): Promise<void> {
+  const { error } = await supabase.from('systems').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ── 접수 판정 기준 ───────────────────────────────────────────────────────────
+
+export async function fetchIntakeRules(): Promise<IntakeRule[]> {
+  return unwrap(
+    await supabase.from('intake_rules').select('*').order('kind').order('sort_order'),
+  ) as IntakeRule[]
+}
+
+export async function createIntakeRule(input: {
+  kind: 'include' | 'exclude'
+  content: string
+  sortOrder?: number
+}): Promise<void> {
+  const { error } = await supabase.from('intake_rules').insert({
+    kind: input.kind,
+    content: input.content.trim(),
+    sort_order: input.sortOrder ?? 0,
+  })
+  if (error) {
+    if (error.code === '23505') throw new Error('같은 내용의 기준이 이미 있습니다.')
+    throw new Error(error.message)
+  }
+}
+
+export async function updateIntakeRule(
+  id: number,
+  patch: Partial<Pick<IntakeRule, 'content' | 'sort_order' | 'is_active'>>,
+): Promise<void> {
+  const { error } = await supabase.from('intake_rules').update(patch).eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+export async function deleteIntakeRule(id: number): Promise<void> {
+  const { error } = await supabase.from('intake_rules').delete().eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+// ── 일반 설정 ────────────────────────────────────────────────────────────────
+
+export async function fetchSettings(): Promise<AppSetting[]> {
+  return unwrap(await supabase.from('app_settings').select('*').order('key')) as AppSetting[]
+}
+
+export async function updateSetting(key: string, value: string): Promise<void> {
+  const { error } = await supabase.from('app_settings').update({ value }).eq('key', key)
+  if (error) throw new Error(error.message)
+}
+
+// ── 메일 스크리닝 ────────────────────────────────────────────────────────────
+
+export interface ScanFilters {
+  /** 'all' | 'ticketed' | 'excluded' */
+  outcome?: string
+  /** true 면 사람이 아직 보지 않은 것만 */
+  unreviewedOnly?: boolean
+  search?: string
+}
+
+export async function fetchScannedMails(filters: ScanFilters = {}): Promise<ScannedMail[]> {
+  let query = supabase
+    .from('scanned_mails')
+    .select('*')
+    .order('scanned_at', { ascending: false })
+    .limit(200)
+
+  if (filters.outcome && filters.outcome !== 'all') {
+    query = query.eq('outcome', filters.outcome)
+  }
+  if (filters.unreviewedOnly) {
+    query = query.is('reviewed_at', null)
+  }
+  if (filters.search?.trim()) {
+    const term = filters.search.trim().replace(/[%,]/g, '')
+    query = query.or(`subject.ilike.%${term}%,sender_email.ilike.%${term}%`)
+  }
+
+  return unwrap(await query) as ScannedMail[]
+}
+
+/** 검토 완료 표시 — LLM 판정이 맞았다고 확인하는 것입니다. */
+export async function markScanReviewed(
+  id: number,
+  userId: string,
+  note?: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('scanned_mails')
+    .update({
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+      review_note: note?.trim() || null,
+    })
+    .eq('id', id)
+  if (error) throw new Error(error.message)
+}
+
+/**
+ * 오판 구제 — 걸러진 메일을 티켓으로 전환합니다.
+ *
+ * 원문을 그대로 티켓 본문으로 옮기고, 분류는 LLM 이 남긴 값을 기본으로 씁니다.
+ * `source_message_id` 를 그대로 넣어 다음 스캔에서 다시 티켓이 되지 않게 합니다.
+ */
+export async function convertScanToTicket(
+  scan: ScannedMail,
+  userId: string,
+  overrides: {
+    workType?: string
+    category?: string
+    severity?: string
+    systemType?: string | null
+  } = {},
+): Promise<number> {
+  const ticket = unwrap(
+    await supabase
+      .from('tickets')
+      .insert({
+        subject: scan.subject || '(제목 없음)',
+        description: scan.body || '',
+        body_html: scan.body_html,
+        reporter_email: scan.sender_email || 'unknown@unknown',
+        reporter_name: scan.sender_name,
+        received_at: scan.received_at ?? scan.scanned_at,
+        source_message_id: scan.message_id,
+        source_folder: scan.folder,
+        created_by: userId,
+      })
+      .select('id')
+      .single(),
+  ) as { id: number }
+
+  const { error: metaError } = await supabase.from('ticket_meta').insert({
+    ticket_id: ticket.id,
+    work_type: overrides.workType ?? 'maintenance',
+    category: overrides.category ?? scan.llm_category ?? 'error',
+    severity: overrides.severity ?? scan.llm_severity ?? 'medium',
+    system_type: overrides.systemType ?? scan.llm_system ?? null,
+    // 사람이 구제한 건이므로 바로 분석/할당으로 보냅니다.
+    status: 'triage',
+  })
+  if (metaError) {
+    await supabase.from('tickets').delete().eq('id', ticket.id)
+    throw new Error(`분류 정보 저장에 실패해 되돌렸습니다: ${metaError.message}`)
+  }
+
+  const { error: scanError } = await supabase
+    .from('scanned_mails')
+    .update({
+      outcome: 'ticketed',
+      ticket_id: ticket.id,
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+    })
+    .eq('id', scan.id)
+  if (scanError) throw new Error(scanError.message)
+
+  return ticket.id
 }

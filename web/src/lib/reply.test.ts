@@ -11,8 +11,9 @@ const ticket = {
 
 const meta: Pick<
   TicketMeta,
-  'category' | 'severity' | 'system_type' | 'status' | 'completed_at'
+  'work_type' | 'category' | 'severity' | 'system_type' | 'status' | 'completed_at'
 > = {
+  work_type: 'incident',
   category: 'error',
   severity: 'critical',
   system_type: 'erp',
@@ -59,11 +60,25 @@ describe('buildReplyBody', () => {
 
   it('코드값이 아니라 한글 라벨이 들어갑니다', () => {
     const body = buildReplyBody(ticket, meta)
+    expect(body).toContain('장애')
     expect(body).toContain('오류')
     expect(body).toContain('Critical')
-    expect(body).toContain('ERP')
     expect(body).toContain('완료')
     expect(body).not.toContain('system_type')
+  })
+
+  it('시스템 표시명을 넘기면 그대로 씁니다', () => {
+    const body = buildReplyBody(ticket, meta, [], 'IT 운영팀 드림', 'ERP 시스템')
+    expect(body).toContain('ERP 시스템')
+  })
+
+  it('표시명이 없으면 코드값을 씁니다', () => {
+    expect(buildReplyBody(ticket, meta)).toContain('erp')
+  })
+
+  it('코드도 없으면 미분류', () => {
+    const body = buildReplyBody(ticket, { ...meta, system_type: null })
+    expect(body).toContain('미분류')
   })
 
   it('소요 시간이 들어갑니다', () => {
