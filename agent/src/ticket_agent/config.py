@@ -39,6 +39,17 @@ def _int(name: str, default: int) -> int:
         raise ConfigError(f"{name} 은 정수여야 합니다 (받은 값: {raw!r})") from exc
 
 
+def _optional_int(name: str) -> int | None:
+    """비워 두면 None. 모델마다 허용 범위가 달라 기본은 '보내지 않음' 입니다."""
+    raw = _optional(name)
+    if not raw:
+        return None
+    try:
+        return int(raw)
+    except ValueError as exc:
+        raise ConfigError(f"{name} 은 정수여야 합니다 (받은 값: {raw!r})") from exc
+
+
 def _csv(name: str) -> list[str]:
     raw = _optional(name)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -77,8 +88,9 @@ class Config:
     supabase_service_key: str
     supabase_bucket: str
 
-    anthropic_api_key: str
-    anthropic_model: str
+    gemini_api_key: str
+    gemini_model: str
+    gemini_thinking_budget: int | None
 
     mail_backend: str
     outlook_folder: str
@@ -103,7 +115,7 @@ class Config:
 def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
     """.env 를 읽어 Config 를 만듭니다.
 
-    Supabase/Anthropic 자격증명은 필수입니다 — 없으면 즉시 ConfigError.
+    Supabase/Gemini 자격증명은 필수입니다 — 없으면 즉시 ConfigError.
     """
     load_dotenv(env_file, override=False)
 
@@ -117,8 +129,9 @@ def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
         supabase_url=_require("SUPABASE_URL"),
         supabase_service_key=_require("SUPABASE_SERVICE_KEY"),
         supabase_bucket=_optional("SUPABASE_BUCKET", "ticket-attachments") or "ticket-attachments",
-        anthropic_api_key=_require("ANTHROPIC_API_KEY"),
-        anthropic_model=_optional("ANTHROPIC_MODEL", "claude-opus-5") or "claude-opus-5",
+        gemini_api_key=_require("GEMINI_API_KEY"),
+        gemini_model=_optional("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
+        gemini_thinking_budget=_optional_int("GEMINI_THINKING_BUDGET"),
         mail_backend=resolve_mail_backend(_optional("AGENT_MAIL_BACKEND", "auto")),
         outlook_folder=_optional("OUTLOOK_FOLDER", "받은 편지함") or "받은 편지함",
         outlook_done_folder=_optional("OUTLOOK_DONE_FOLDER"),

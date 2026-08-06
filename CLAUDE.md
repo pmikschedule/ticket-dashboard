@@ -32,7 +32,11 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
   발송은 되돌릴 수 없습니다. 자동 발송으로 바꾸는 것은 운영자의 명시적 선택입니다.
 - **메일 한 통이 두 번 티켓이 되지 않습니다.** `tickets.source_message_id` 유니크 제약이 근거이고,
   수집 경로에서 반드시 먼저 조회합니다.
-- **분류에 실패해도 메일을 버리지 않습니다** (기획서 3.1). LLM 오류·스키마 위반은
+- **메일 분류는 Google Gemini 를 씁니다.** 교체 지점은 `classifier.py` 의 `Classifier`
+  클래스 하나이고, `parse_response`/`_fallback`/`build_user_message` 는 프로바이더와 무관합니다.
+  Gemini 스키마는 union 타입(`["string","null"]`)과 `additionalProperties` 를 지원하지 않으므로,
+  없는 값은 null 이 아니라 **빈 문자열**로 받고 파서가 None 으로 바꿉니다.
+- **분류에 실패해도 메일을 버리지 않습니다** (기획서 3.1). LLM 오류·안전필터·스키마 위반은
   안전한 기본값(`etc`/`medium`) + `triage` 상태로 적재하고 `llm_error` 에 사유를 남깁니다.
   화면에는 `⚠ 자동분류 실패` 배지로 드러냅니다 — 숨기면 담당자가 잘못된 등급을 사실로 믿습니다.
 - **집계는 순수 함수를 거칩니다.** 웹은 `web/src/lib/stats.ts`, 에이전트는 `summarize.py`.
@@ -60,7 +64,7 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
 
 ```bash
 cd web   && npm test && npm run build   # 순수 로직 83개 + 타입체크
-cd agent && pytest -q                   # 순수 로직·파이프라인 103개
+cd agent && pytest -q                   # 순수 로직·파이프라인 114개
 cd agent && ticket-agent doctor         # 설정·연결 점검
 ```
 

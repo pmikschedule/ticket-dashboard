@@ -6,7 +6,7 @@
 ```
  ┌─ 관리자 PC (Windows + Outlook) ────────────┐
  │  Python 에이전트                            │
- │   ① 폴더 스캔 → ② Claude 분류               │
+ │   ① 폴더 스캔 → ② Gemini 분류               │
  │   ③ Supabase 적재 + 첨부 업로드              │
  │   ⑤ 발송 큐 감지 → 아웃룩 회신 (사람 확인)    │
  └────────────────┬───────────────────────────┘
@@ -74,4 +74,4 @@ cd web   && npm install && npm test && npm run build
 cd agent && pip install -e ".[dev]" && pytest -q
 ```
 
-에이전트 테스트는 Outlook·Supabase·Claude API 없이 macOS 에서도 전부 돕니다.
+에이전트 테스트는 Outlook·Supabase·Gemini API 없이 macOS 에서도 전부 돕니다.

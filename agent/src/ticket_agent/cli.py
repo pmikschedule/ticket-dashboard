@@ -36,7 +36,11 @@ def _setup_logging(level: str) -> None:
 def _build(config: Config):
     mail = build_mail_client(config)
     store = TicketStore(config.supabase_url, config.supabase_service_key, config.supabase_bucket)
-    classifier = Classifier(config.anthropic_api_key, config.anthropic_model)
+    classifier = Classifier(
+        config.gemini_api_key,
+        config.gemini_model,
+        thinking_budget=config.gemini_thinking_budget,
+    )
     return mail, store, classifier
 
 
@@ -138,7 +142,7 @@ def cmd_doctor(config: Config, args: argparse.Namespace) -> int:
     print(f"  대상 폴더     : {config.outlook_folder}")
     print(f"  처리 후 이동  : {config.outlook_done_folder or '(이동 안 함, 읽음 표시만)'}")
     print(f"  발송 모드     : {config.send_mode}")
-    print(f"  분류 모델     : {config.anthropic_model}")
+    print(f"  분류 모델     : {config.gemini_model} (Google Gemini)")
     print(f"  Supabase URL  : {config.supabase_url}")
     print(f"  첨부 버킷     : {config.supabase_bucket}")
 
@@ -165,14 +169,18 @@ def cmd_doctor(config: Config, args: argparse.Namespace) -> int:
         print(f"  ❌ 메일 백엔드 — {exc}")
 
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(api_key=config.anthropic_api_key)
-        client.models.retrieve(config.anthropic_model)
-        print(f"  ✅ Claude API — 모델 '{config.anthropic_model}' 확인")
+        classifier = Classifier(config.gemini_api_key, config.gemini_model)
+        models = classifier.available_models()
+        if config.gemini_model in models:
+            print(f"  ✅ Gemini API — 모델 '{config.gemini_model}' 사용 가능")
+        else:
+            ok = False
+            print(f"  ❌ Gemini API — 키는 유효하지만 '{config.gemini_model}' 을 쓸 수 없습니다.")
+            print(f"     이 키로 쓸 수 있는 모델: {', '.join(models[:8]) or '(없음)'}")
+            print("     .env 의 GEMINI_MODEL 을 위 목록 중 하나로 바꾸세요.")
     except Exception as exc:
         ok = False
-        print(f"  ❌ Claude API — {exc}")
+        print(f"  ❌ Gemini API — {exc}")
 
     print("\n결과:", "정상" if ok else "위 항목을 해결해야 에이전트가 동작합니다.")
     return 0 if ok else 1

@@ -110,10 +110,30 @@ Outlook 접근을 `MailClient` 인터페이스로 감싸고 두 구현을 둡니
 1차에서 T가 나오면 어차피 같은 본문을 다시 읽기 때문입니다. 응답 스키마에 `is_request`(1차)와
 나머지 필드(2차)를 함께 두고, `is_request=false`면 나머지를 무시합니다.
 
-- 모델: `claude-sonnet-5`
-- 구조화 출력: tool use(`extract_ticket`) 강제 — 자유 텍스트 JSON 파싱을 하지 않습니다
+> **기획서와 다른 점 — LLM 제공자**
+> 기획서 5장은 "Claude API로 분류"라고 적었지만, **Google Gemini를 씁니다.**
+> 운영 주체가 Gemini 키를 제공하기로 했기 때문입니다 (2026-08-06 결정).
+> 판별 로직·프롬프트·예외 처리 방침은 기획서 3.1 그대로이고, 호출 대상만 다릅니다.
+
+- 모델: `gemini-2.5-flash` (`GEMINI_MODEL`로 변경 가능)
+- 구조화 출력: `response_mime_type=application/json` + `response_json_schema` — 자유 텍스트 파싱을 하지 않습니다
+- `temperature=0` — 같은 메일은 같은 결과가 나와야 합니다
 - 본문은 12,000자로 절단하고 인용부(`-----Original Message-----` 이하)를 제거한 뒤 전달합니다
-- **판별 실패·API 오류는 티켓을 버리지 않습니다.** `etc`/`medium`/`triage`로 적재하고 `llm_error`에 사유를 남깁니다
+- **판별 실패·API 오류·안전 필터는 티켓을 버리지 않습니다.** `etc`/`medium`/`triage`로 적재하고 `llm_error`에 사유를 남깁니다
+
+**Gemini 스키마 제약** — 두 가지를 지켜야 요청이 거절되지 않습니다.
+
+| 제약 | 대응 |
+|---|---|
+| union 타입(`["string","null"]`) 미지원 | `due_date`를 `string`으로 받고 **없으면 빈 문자열**. 파서가 `None`으로 바꿉니다 |
+| `additionalProperties` 미지원 | 스키마에서 제거. 대신 파서가 아는 키만 읽고 나머지는 무시합니다 |
+
+**교체 지점은 `Classifier` 클래스 하나입니다.** `parse_response` / `_fallback` /
+`build_user_message`는 제공자와 무관해서, 나중에 다른 모델로 옮겨도 판별 규칙과 테스트가 그대로 남습니다.
+
+**시스템 종류는 인자로 받습니다.** `build_response_schema(system_types)` /
+`build_system_prompt(system_types)` 형태라, 시스템 종류가 설정 테이블로 옮겨갈 때
+DB 값을 그대로 넘기면 됩니다. 지금은 상수를 기본값으로 씁니다.
 
 ### 4.3 회신 발송
 

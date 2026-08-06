@@ -25,7 +25,7 @@
 | 계정 | 용도 | 비용 |
 |---|---|---|
 | Supabase | DB·인증·파일 저장 | 무료 플랜 |
-| Anthropic Console | 메일 분류 LLM | 종량제 |
+| Google AI Studio | 메일 분류 LLM (Gemini) | 무료 한도 있음 · 초과 시 종량제 |
 | GitHub | 대시보드 배포 | 무료 |
 
 **PC 2종**
@@ -39,8 +39,10 @@
 > 되지 않고, `AGENT_MAIL_BACKEND=fixture` 로 흐름만 확인할 수 있습니다.
 
 **LLM 비용 감각** — 메일 한 통 분류에 본문 절단 기준 대략 2~4천 토큰이 듭니다.
-하루 30통이면 월 1,000통 안쪽이고, 기본 모델(`claude-opus-5`) 기준 월 몇 달러 수준입니다.
-비용을 더 줄이려면 `.env` 의 `ANTHROPIC_MODEL` 을 `claude-sonnet-5` 로 바꾸면 됩니다.
+하루 30통이면 월 1,000통 안쪽입니다. 기본 모델은 `gemini-2.5-flash` 로,
+무료 한도 안에서 처리되거나 초과해도 매우 적은 금액입니다.
+정확도가 아쉬우면 `.env` 의 `GEMINI_MODEL` 을 상위 모델로 올리면 됩니다 —
+쓸 수 있는 모델 목록은 `ticket-agent doctor` 가 알려줍니다.
 
 ---
 
@@ -164,9 +166,11 @@ sb_secret_xxxxxxxxxxxx               →  SUPABASE_SERVICE_KEY     (에이전트
 > Secret 키를 웹에 넣으면 정적 사이트라 브라우저 개발자도구에 그대로 노출되고,
 > URL 을 아는 누구나 모든 테이블을 읽고 지울 수 있게 됩니다. **절대 넣지 마세요.**
 
-### 5-4. Anthropic API 키
+### 5-4. Gemini API 키
 
-<https://console.anthropic.com> → API Keys → Create Key → `sk-ant-…` → `ANTHROPIC_API_KEY`
+<https://aistudio.google.com/apikey> → **Create API key** → `AIza…` → `GEMINI_API_KEY`
+
+에이전트 PC 의 `agent/.env` 에만 넣습니다. 웹 대시보드는 LLM 을 직접 부르지 않습니다.
 
 ---
 
@@ -259,7 +263,7 @@ notepad .env
 |---|---|
 | `SUPABASE_URL` | 5-1 의 Project URL |
 | `SUPABASE_SERVICE_KEY` | **5-3 의 Secret key** |
-| `ANTHROPIC_API_KEY` | 5-4 의 키 |
+| `GEMINI_API_KEY` | 5-4 의 키 |
 | `OUTLOOK_FOLDER` | 스캔할 폴더. 하위 폴더는 `받은 편지함/요청` |
 | `OUTLOOK_DONE_FOLDER` | 처리한 메일을 옮길 폴더 (비우면 읽음 표시만) |
 
@@ -277,7 +281,10 @@ notepad .env
 ticket-agent doctor
 ```
 
-Supabase · 메일 백엔드 · Claude API 세 항목이 전부 ✅ 여야 합니다.
+Supabase · 메일 백엔드 · Gemini API 세 항목이 전부 ✅ 여야 합니다.
+
+`GEMINI_MODEL` 이 키로 쓸 수 없는 모델이면, doctor 가 **실제 사용 가능한 모델 목록**을
+출력해 줍니다. 그중 하나로 `.env` 를 고치면 됩니다.
 
 ### 8-5. 실행
 
@@ -367,7 +374,7 @@ gh run watch
 | 8 | 첨부가 있는 메일 | 상세 화면에서 첨부 클릭 → 다운로드됨 |
 | 9 | 카드 표시 항목 | 제목·요청자·등급·시스템·접수일·기한이 모두 보임 |
 | 10 | 본문이 한 줄뿐인 부실한 메일 | **반려되지 않고** 적재됨 |
-| 11 | `ANTHROPIC_API_KEY` 를 틀리게 두고 실행 | 티켓은 생기고 `⚠ 자동분류 실패` 배지가 뜸 |
+| 11 | `GEMINI_API_KEY` 를 틀리게 두고 실행 | 티켓은 생기고 `⚠ 자동분류 실패` 배지가 뜸 |
 
 ### 티켓 관리 (기획서 3.2)
 

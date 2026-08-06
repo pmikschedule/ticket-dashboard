@@ -27,7 +27,7 @@ src/ticket_agent/
 ├─ constants.py     코드값 — schema.sql / web 의 constants.ts 와 같은 값
 ├─ models.py        값 객체 (RawMail, Classification, OutboundEmail …)
 ├─ textutil.py      본문 정리 — 인용부 제거, 절단, 파일명 정규화  ★순수
-├─ classifier.py    Claude 로 판별·분류
+├─ classifier.py    Gemini 로 판별·분류
 ├─ store.py         Supabase DB·Storage 접근
 ├─ collector.py     수집 파이프라인
 ├─ summarize.py     회신 본문 작성  ★순수
@@ -47,7 +47,7 @@ src/ticket_agent/
 발송은 `.fixture-outbox/` 에 텍스트 파일로 기록합니다.
 
 ```bash
-cp .env.example .env      # Supabase·Anthropic 키는 실제 값 필요
+cp .env.example .env      # Supabase·Gemini 키는 실제 값 필요
 ticket-agent collect      # fixture 메일 4통으로 수집 흐름 확인
 ```
 
@@ -61,7 +61,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-103개. 전부 Outlook·Supabase·Claude API 없이 돕니다 —
+114개. 전부 Outlook·Supabase·Gemini API 없이 돕니다 —
 외부 의존은 가짜 객체로 대체하고, 나머지는 순수 함수입니다.
 
 ## 자주 걸리는 것

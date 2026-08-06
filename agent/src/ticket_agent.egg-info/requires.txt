@@ -1,0 +1,9 @@
+google-genai>=1.0
+supabase>=2.10
+python-dotenv>=1.0
+
+[:sys_platform == "win32"]
+pywin32>=306
+
+[dev]
+pytest>=8.0

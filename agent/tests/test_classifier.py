@@ -31,7 +31,7 @@ class TestParseResponse:
                 "reason": "저장 실패 증상이 명시됨",
             },
             make_mail(),
-            "claude-opus-5",
+            "gemini-2.5-flash",
         )
         assert result.is_request is True
         assert result.category == "error"
@@ -54,7 +54,7 @@ class TestParseResponse:
                 "reason": "",
             },
             make_mail(),
-            "claude-opus-5",
+            "gemini-2.5-flash",
         )
         assert result.category == "error"
         assert result.severity == "medium"
@@ -118,7 +118,7 @@ class TestParseResponse:
 class TestFallback:
     def test_fallback_keeps_ticket_alive(self):
         """기획서 3.1 — 분류에 실패해도 반려하지 않고 적재합니다."""
-        result = _fallback(make_mail(), "API 오류: timeout", "claude-opus-5")
+        result = _fallback(make_mail(), "API 오류: timeout", "gemini-2.5-flash")
         assert result.is_request is True
         assert result.failed is True
         assert result.error == "API 오류: timeout"
@@ -146,3 +146,85 @@ class TestBuildUserMessage:
 
     def test_missing_received_date_is_labelled(self):
         assert "(알 수 없음)" in build_user_message(make_mail(received_at=None))
+
+
+class TestSchemaAndPrompt:
+    """Gemini 로 보내는 스키마·프롬프트가 제약을 지키는지 확인합니다."""
+
+    def test_schema_has_no_union_types(self):
+        """Gemini 는 ["string","null"] 같은 union 타입을 거절합니다."""
+        from ticket_agent.classifier import build_response_schema
+
+        for name, spec in build_response_schema()["properties"].items():
+            assert isinstance(spec["type"], str), f"{name} 의 type 이 배열입니다"
+
+    def test_schema_has_no_additional_properties(self):
+        """Gemini 스키마 지원 범위 밖입니다."""
+        from ticket_agent.classifier import build_response_schema
+
+        assert "additionalProperties" not in build_response_schema()
+
+    def test_due_date_is_plain_string(self):
+        """null 대신 빈 문자열로 받습니다."""
+        from ticket_agent.classifier import build_response_schema
+
+        assert build_response_schema()["properties"]["due_date"]["type"] == "string"
+
+    def test_system_type_enum_follows_argument(self):
+        """시스템 종류가 설정 테이블로 옮겨가도 스키마가 따라오도록."""
+        from ticket_agent.classifier import build_response_schema
+
+        schema = build_response_schema(["crm", "mes"])
+        assert schema["properties"]["system_type"]["enum"] == ["crm", "mes"]
+
+    def test_empty_system_types_still_valid(self):
+        """사용자가 아직 아무 시스템도 등록하지 않은 상태."""
+        from ticket_agent.classifier import build_response_schema
+
+        assert build_response_schema([])["properties"]["system_type"]["enum"] == ["etc"]
+
+    def test_prompt_lists_system_types(self):
+        from ticket_agent.classifier import build_system_prompt
+
+        prompt = build_system_prompt(["crm", "mes"])
+        assert "crm" in prompt and "mes" in prompt
+
+    def test_prompt_handles_empty_system_types(self):
+        from ticket_agent.classifier import build_system_prompt
+
+        assert "등록된 시스템이 없습니다" in build_system_prompt([])
+
+
+class TestParseWithCustomSystemTypes:
+    def test_registered_type_is_kept(self):
+        result = parse_response(
+            {"is_request": True, "title": "t", "category": "error", "severity": "low",
+             "system_type": "mes", "due_date": "", "confidence": 0.5, "reason": "r"},
+            make_mail(), "m", ["crm", "mes"],
+        )
+        assert result.system_type == "mes"
+
+    def test_unregistered_type_falls_back(self):
+        result = parse_response(
+            {"is_request": True, "title": "t", "category": "error", "severity": "low",
+             "system_type": "sap", "due_date": "", "confidence": 0.5, "reason": "r"},
+            make_mail(), "m", ["crm", "mes"],
+        )
+        assert result.system_type == "etc"
+
+    def test_empty_due_date_string_becomes_none(self):
+        """Gemini 는 null 대신 빈 문자열을 돌려줍니다."""
+        result = parse_response(
+            {"is_request": True, "title": "t", "category": "error", "severity": "low",
+             "system_type": "etc", "due_date": "", "confidence": 0.5, "reason": "r"},
+            make_mail(), "m",
+        )
+        assert result.due_date is None
+
+    def test_empty_reason_becomes_none(self):
+        result = parse_response(
+            {"is_request": True, "title": "t", "category": "error", "severity": "low",
+             "system_type": "etc", "due_date": "", "confidence": 0.5, "reason": "   "},
+            make_mail(), "m",
+        )
+        assert result.reason is None

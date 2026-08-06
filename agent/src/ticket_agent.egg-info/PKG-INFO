@@ -1,0 +1,11 @@
+Metadata-Version: 2.4
+Name: ticket-agent
+Version: 0.1.0
+Summary: Outlook 메일을 수집해 티켓으로 적재하고, 완료 티켓의 회신을 발송하는 로컬 에이전트
+Requires-Python: >=3.10
+Requires-Dist: google-genai>=1.0
+Requires-Dist: supabase>=2.10
+Requires-Dist: python-dotenv>=1.0
+Requires-Dist: pywin32>=306; sys_platform == "win32"
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
