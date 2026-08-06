@@ -9,5 +9,9 @@ export default defineConfig({
   test: {
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    // 시간대를 고정합니다. 주간 구간·기한 초과 판정은 전부 로컬 시각 기준이고
+    // (한국 팀이 쓰는 화면이므로 그게 맞습니다), 고정하지 않으면 UTC 인 CI 와
+    // KST 인 개발 기기에서 결과가 갈립니다.
+    env: { TZ: 'Asia/Seoul' },
   },
 })
