@@ -8,11 +8,15 @@ import {
   useDeleteIntakeRule,
   useDeleteSystem,
   useIntakeRules,
+  useClearSecret,
+  useSecretStatus,
+  useSetSecret,
   useSettings,
   useUpdateIntakeRule,
   useUpdateSetting,
   useUpdateSystem,
 } from '../hooks/queries'
+import { GEMINI_KEY_SECRET, GEMINI_MODEL_SETTING } from '../lib/api'
 import { RULE_KINDS, RULE_KIND_LABELS, type RuleKind } from '../lib/constants'
 import { formatDateTime } from '../lib/format'
 
@@ -46,10 +50,225 @@ export default function SettingsPage() {
 
       {error && <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
 
+      <SystemConfigSection canEdit={isAdmin} onError={fail} />
       <IntakeRulesSection canEdit={isAdmin} onError={fail} />
       <AmbiguousPolicySection canEdit={isAdmin} onError={fail} />
       <SystemsSection canEdit={isAdmin} onError={fail} />
     </div>
+  )
+}
+
+// ── 시스템 설정 ─────────────────────────────────────────────────────────────
+
+/**
+ * 에이전트가 쓰는 자격증명·모델.
+ *
+ * **API 키는 넣을 수만 있고 꺼낼 수 없습니다.** `app_secrets` 표에는 RLS 정책이
+ * 하나도 없어 웹에서는 select 자체가 막히고, 상태 조회 함수는 마지막 4글자만
+ * 돌려줍니다. 값을 확인해야 한다면 확인하는 게 아니라 교체하는 것이 맞습니다.
+ */
+function SystemConfigSection({
+  canEdit,
+  onError,
+}: {
+  canEdit: boolean
+  onError: (err: unknown) => void
+}) {
+  const { data: secrets = [], isLoading, error: secretError } = useSecretStatus(canEdit)
+  const { data: settings = [] } = useSettings()
+  const setSecret = useSetSecret()
+  const clearSecret = useClearSecret()
+  const updateSetting = useUpdateSetting()
+
+  const [draftKey, setDraftKey] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+
+  const gemini = secrets.find((entry) => entry.key === GEMINI_KEY_SECRET)
+  const model = settings.find((entry) => entry.key === GEMINI_MODEL_SETTING)
+
+  function submitKey(event: FormEvent) {
+    event.preventDefault()
+    const value = draftKey.trim()
+    if (!value) return
+    setSecret.mutate(
+      { key: GEMINI_KEY_SECRET, value },
+      {
+        onError,
+        onSuccess: () => {
+          // 입력값을 즉시 지웁니다. 화면에 남겨 둘 이유가 없습니다.
+          setDraftKey('')
+          setEditing(false)
+          setSaved('등록했습니다. 다음 스캔부터 이 키를 씁니다.')
+        },
+      },
+    )
+  }
+
+  return (
+    <section className="card p-5">
+      <h2 className="text-sm font-semibold text-slate-800">시스템 설정</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        에이전트가 메일을 분류할 때 쓰는 값입니다. 바꾸면 다음 스캔부터 적용되고,
+        Windows PC 에 붙을 필요가 없습니다.
+      </p>
+
+      {!canEdit ? (
+        <p className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-500">
+          API 키 설정은 관리자만 볼 수 있습니다.
+        </p>
+      ) : (
+        <>
+          {/* ── Gemini API 키 ── */}
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <div className="flex items-baseline justify-between gap-2">
+              <h3 className="text-xs font-semibold text-slate-800">Gemini API 키</h3>
+              <a
+                className="text-[11px] text-sky-700 hover:underline"
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
+                rel="noreferrer"
+              >
+                키 발급받기 ↗
+              </a>
+            </div>
+
+            {secretError && (
+              <p className="mt-2 rounded-md bg-rose-50 p-2 text-xs text-rose-700">
+                등록 상태를 읽지 못했습니다: {String(secretError)}
+              </p>
+            )}
+
+            {isLoading && <p className="mt-2 text-xs text-slate-500">확인 중…</p>}
+
+            {!isLoading && !editing && (
+              <div className="mt-2">
+                {gemini ? (
+                  <div className="rounded-md bg-emerald-50 p-3">
+                    <p className="text-xs font-medium text-emerald-900">
+                      등록됨 · <span className="font-mono">{gemini.hint}</span>
+                      <span className="ml-1 font-normal text-emerald-800">
+                        ({gemini.length}자)
+                      </span>
+                    </p>
+                    <p className="mt-1 text-[11px] text-emerald-800">
+                      {formatDateTime(gemini.updated_at)}
+                      {gemini.updated_by && ` · ${gemini.updated_by}`}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rounded-md bg-amber-50 p-3">
+                    <p className="text-xs font-medium text-amber-900">등록되지 않았습니다.</p>
+                    <p className="mt-1 text-[11px] text-amber-800">
+                      에이전트는 Windows PC 의 <code>agent/.env</code> 에 적힌
+                      <code> GEMINI_API_KEY</code> 를 씁니다. 여기 등록하면 그쪽 대신
+                      이 값을 씁니다.
+                    </p>
+                  </div>
+                )}
+
+                {saved && <p className="mt-2 text-[11px] text-emerald-700">{saved}</p>}
+
+                <div className="mt-2 flex gap-1.5">
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => {
+                      setSaved(null)
+                      setEditing(true)
+                    }}
+                  >
+                    {gemini ? '교체' : '등록'}
+                  </button>
+                  {gemini && (
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs text-rose-700"
+                      disabled={clearSecret.isPending}
+                      onClick={() => {
+                        setSaved(null)
+                        clearSecret.mutate(GEMINI_KEY_SECRET, {
+                          onError,
+                          onSuccess: () =>
+                            setSaved('지웠습니다. 에이전트는 .env 의 값으로 돌아갑니다.'),
+                        })
+                      }}
+                    >
+                      지우기
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {editing && (
+              <form className="mt-2" onSubmit={submitKey}>
+                <input
+                  className="field font-mono"
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoFocus
+                  placeholder="AIza…"
+                  value={draftKey}
+                  onChange={(event) => setDraftKey(event.target.value)}
+                />
+                <p className="mt-1 text-[11px] text-slate-500">
+                  저장한 뒤에는 <strong>다시 볼 수 없습니다</strong> — 마지막 4글자만 남습니다.
+                  확인이 필요하면 새 키로 교체하세요.
+                </p>
+                <div className="mt-2 flex gap-1.5">
+                  <button
+                    type="submit"
+                    className="btn-primary text-xs"
+                    disabled={!draftKey.trim() || setSecret.isPending}
+                  >
+                    {setSecret.isPending ? '저장 중…' : '저장'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => {
+                      setDraftKey('')
+                      setEditing(false)
+                    }}
+                  >
+                    취소
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+
+          {/* ── 모델 ── */}
+          <div className="mt-4 border-t border-slate-100 pt-4">
+            <label className="label" htmlFor="gemini-model">
+              Gemini 모델
+            </label>
+            <input
+              id="gemini-model"
+              className="field font-mono"
+              defaultValue={model?.value ?? ''}
+              placeholder="gemini-2.5-flash"
+              onBlur={(event) => {
+                const value = event.target.value.trim()
+                if (value === (model?.value ?? '')) return
+                setSaved(null)
+                updateSetting.mutate(
+                  { key: GEMINI_MODEL_SETTING, value },
+                  { onError, onSuccess: () => setSaved('모델을 바꿨습니다.') },
+                )
+              }}
+            />
+            <p className="mt-1 text-[11px] text-slate-500">
+              {model?.description ??
+                '비워 두면 에이전트가 .env 의 GEMINI_MODEL 을 씁니다.'}{' '}
+              쓸 수 있는 모델은 Windows PC 에서 <code>ticket-agent doctor</code> 로 확인합니다.
+            </p>
+          </div>
+        </>
+      )}
+    </section>
   )
 }
 

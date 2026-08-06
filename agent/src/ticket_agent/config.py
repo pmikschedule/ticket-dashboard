@@ -88,6 +88,8 @@ class Config:
     supabase_service_key: str
     supabase_bucket: str
 
+    # .env 의 값입니다. **최종 값이 아닙니다** — DB(app_secrets)에 등록돼 있으면
+    # 그쪽이 이깁니다. 확정은 resolve_gemini() 가 합니다.
     gemini_api_key: str
     gemini_model: str
     gemini_thinking_budget: int | None
@@ -115,7 +117,9 @@ class Config:
 def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
     """.env 를 읽어 Config 를 만듭니다.
 
-    Supabase/Gemini 자격증명은 필수입니다 — 없으면 즉시 ConfigError.
+    Supabase 자격증명은 필수입니다 — 없으면 즉시 ConfigError.
+    Gemini 키는 여기서 강제하지 않습니다. 설정 화면에서 등록할 수 있어
+    .env 에 없을 수 있고, 실제 확정은 resolve_gemini() 가 합니다.
     """
     load_dotenv(env_file, override=False)
 
@@ -129,7 +133,10 @@ def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
         supabase_url=_require("SUPABASE_URL"),
         supabase_service_key=_require("SUPABASE_SERVICE_KEY"),
         supabase_bucket=_optional("SUPABASE_BUCKET", "ticket-attachments") or "ticket-attachments",
-        gemini_api_key=_require("GEMINI_API_KEY"),
+        # 여기서 _require 를 쓰지 않습니다. 화면에서 등록하는 경로가 생겨
+        # .env 에 없을 수 있고, 그때 에이전트가 아예 못 뜨면 안 됩니다.
+        # 둘 다 없을 때의 오류는 resolve_gemini() 가 냅니다.
+        gemini_api_key=_optional("GEMINI_API_KEY", "") or "",
         gemini_model=_optional("GEMINI_MODEL", "gemini-2.5-flash") or "gemini-2.5-flash",
         gemini_thinking_budget=_optional_int("GEMINI_THINKING_BUDGET"),
         mail_backend=resolve_mail_backend(_optional("AGENT_MAIL_BACKEND", "auto")),

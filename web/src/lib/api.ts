@@ -428,6 +428,48 @@ export async function updateSetting(key: string, value: string): Promise<void> {
   if (error) throw new Error(error.message)
 }
 
+// ── 비밀값 (API 키) ──────────────────────────────────────────────────────────
+
+/**
+ * 화면에서 등록하는 비밀값의 이름.
+ * 에이전트의 `secrets.py` 와 **같은 값**이어야 합니다.
+ */
+export const GEMINI_KEY_SECRET = 'gemini_api_key'
+export const GEMINI_MODEL_SETTING = 'gemini_model'
+
+export interface SecretStatus {
+  key: string
+  is_set: boolean
+  /** 마지막 4글자만 남긴 형태. 값 자체는 서버가 절대 돌려주지 않습니다 */
+  hint: string
+  length: number
+  updated_at: string
+  updated_by: string | null
+}
+
+/**
+ * 등록 상태만 읽습니다. **값은 읽을 수 없습니다.**
+ *
+ * `app_secrets` 표에는 RLS 정책이 하나도 없어서 anon/authenticated 로는
+ * select 자체가 막힙니다. 여기 rpc 는 security definer 함수라 표에 닿지만,
+ * 마스킹한 힌트만 돌려줍니다. 한 번 넣은 키는 화면으로 다시 꺼낼 수 없습니다.
+ */
+export async function fetchSecretStatus(): Promise<SecretStatus[]> {
+  const { data, error } = await supabase.rpc('app_secret_status')
+  if (error) throw new Error(error.message)
+  return (data ?? []) as SecretStatus[]
+}
+
+export async function setSecret(key: string, value: string): Promise<void> {
+  const { error } = await supabase.rpc('set_app_secret', { p_key: key, p_value: value })
+  if (error) throw new Error(error.message)
+}
+
+export async function clearSecret(key: string): Promise<void> {
+  const { error } = await supabase.rpc('clear_app_secret', { p_key: key })
+  if (error) throw new Error(error.message)
+}
+
 // ── 메일 스크리닝 ────────────────────────────────────────────────────────────
 
 export interface ScanFilters {

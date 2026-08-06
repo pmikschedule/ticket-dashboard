@@ -17,6 +17,7 @@ export const keys = {
   allSystems: ['systems', 'all'] as const,
   intakeRules: ['intake-rules'] as const,
   settings: ['settings'] as const,
+  secrets: ['secrets'] as const,
   scans: (filters: api.ScanFilters) => ['scans', filters] as const,
   manualIntakes: ['manual-intakes'] as const,
 }
@@ -167,6 +168,38 @@ export function useUpdateSetting() {
   return useMutation({
     mutationFn: ({ key, value }: { key: string; value: string }) => api.updateSetting(key, value),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.settings }),
+  })
+}
+
+/**
+ * 비밀값의 **등록 상태**만 읽습니다. 값은 서버가 돌려주지 않습니다.
+ *
+ * 관리자가 아니면 함수가 예외를 던지므로, 화면에서는 관리자일 때만 부릅니다.
+ */
+export function useSecretStatus(enabled = true) {
+  return useQuery({
+    queryKey: keys.secrets,
+    queryFn: api.fetchSecretStatus,
+    enabled,
+    // 비밀값 상태를 오래 들고 있을 이유가 없습니다.
+    staleTime: 0,
+    retry: false,
+  })
+}
+
+export function useSetSecret() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ key, value }: { key: string; value: string }) => api.setSecret(key, value),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.secrets }),
+  })
+}
+
+export function useClearSecret() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (key: string) => api.clearSecret(key),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.secrets }),
   })
 }
 

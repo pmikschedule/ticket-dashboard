@@ -168,7 +168,24 @@ sb_secret_xxxxxxxxxxxx               →  SUPABASE_SERVICE_KEY     (에이전트
 
 ### 5-4. Gemini API 키
 
-<https://aistudio.google.com/apikey> → **Create API key** → `AIza…` → `GEMINI_API_KEY`
+<https://aistudio.google.com/apikey> → **Create API key** → `AIza…`
+
+키를 넣는 곳은 두 군데이고, **설정 화면이 우선입니다.**
+
+| 넣는 곳 | 언제 쓰나 |
+|---|---|
+| 웹 → 설정 → 시스템 설정 → Gemini API 키 | **권장.** 키를 바꿀 때 Windows PC 에 붙지 않아도 됩니다 |
+| `agent/.env` 의 `GEMINI_API_KEY` | 대비책. 화면에 등록하지 않았을 때 씁니다 |
+
+설정 화면에 등록하면 `.env` 의 값은 무시됩니다. 화면에서 바꿨는데 `.env` 가
+이기면, 바꾼 줄 알고 옛 키를 계속 쓰게 되기 때문입니다.
+
+**한 번 등록한 키는 화면에서 다시 볼 수 없습니다** — 마지막 4글자만 남습니다.
+값을 저장한 표(`app_secrets`)에는 RLS 정책이 하나도 없어 웹에서 읽는 경로 자체가
+없고, 읽는 쪽은 service_role 로 붙는 에이전트뿐입니다. 확인이 필요하면 확인하지
+말고 새 키로 교체하세요.
+
+어느 쪽 키를 쓰고 있는지는 `ticket-agent doctor` 가 알려 줍니다.
 
 에이전트 PC 의 `agent/.env` 에만 넣습니다. 웹 대시보드는 LLM 을 직접 부르지 않습니다.
 
@@ -263,7 +280,7 @@ notepad .env
 |---|---|
 | `SUPABASE_URL` | 5-1 의 Project URL |
 | `SUPABASE_SERVICE_KEY` | **5-3 의 Secret key** |
-| `GEMINI_API_KEY` | 5-4 의 키 |
+| `GEMINI_API_KEY` | 5-4 의 키. **설정 화면에 등록했다면 비워 둬도 됩니다** |
 | `OUTLOOK_FOLDER` | 스캔할 폴더. 하위 폴더는 `받은 편지함/요청` |
 | `OUTLOOK_DONE_FOLDER` | 처리한 메일을 옮길 폴더 (비우면 읽음 표시만) |
 

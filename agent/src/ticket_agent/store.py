@@ -233,6 +233,30 @@ class TicketStore:
         exclude = [r["content"] for r in rows if r.get("kind") == "exclude"]
         return include, exclude
 
+    def secret(self, key: str) -> str:
+        """비밀값 한 건.
+
+        `app_secrets` 는 정책이 하나도 없어 anon/authenticated 로는 못 읽습니다.
+        여기서 읽히는 이유는 에이전트가 **service_role 키**로 붙어 RLS 를
+        우회하기 때문입니다. 웹은 값을 되돌려받을 방법이 없습니다.
+
+        실패하면 빈 문자열입니다 — 호출자가 .env 로 넘어갑니다.
+        """
+        try:
+            response = (
+                self._client.table("app_secrets")
+                .select("value")
+                .eq("key", key)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            return (rows[0].get("value") if rows else None) or ""
+        except Exception as exc:
+            # 값은 절대 로그에 남기지 않습니다. 키 이름과 사유만.
+            log.warning("비밀값 '%s' 을 읽지 못했습니다: %s", key, exc)
+            return ""
+
     def setting(self, key: str, default: str = "") -> str:
         """app_settings 한 건. 없거나 실패하면 기본값."""
         try:

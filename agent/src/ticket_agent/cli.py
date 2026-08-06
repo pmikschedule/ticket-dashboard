@@ -21,6 +21,7 @@ from .collector import Collector
 from .config import Config, ConfigError, load_config
 from .mail import build_mail_client
 from .manual import ManualProcessor
+from .secrets import resolve_gemini
 from .sender import Sender
 from .store import TicketStore
 
@@ -38,9 +39,18 @@ def _setup_logging(level: str) -> None:
 def _build(config: Config):
     mail = build_mail_client(config)
     store = TicketStore(config.supabase_url, config.supabase_service_key, config.supabase_bucket)
+    # 설정 화면에 등록된 키가 있으면 그쪽을 씁니다 (.env 는 대비책).
+    gemini = resolve_gemini(store, config)
+    log.info(
+        "Gemini — 키 %s (%s), 모델 %s (%s)",
+        gemini.masked_key,
+        gemini.key_source,
+        gemini.model,
+        gemini.model_source,
+    )
     classifier = Classifier(
-        config.gemini_api_key,
-        config.gemini_model,
+        gemini.api_key,
+        gemini.model,
         thinking_budget=config.gemini_thinking_budget,
     )
     return mail, store, classifier
@@ -201,15 +211,24 @@ def cmd_doctor(config: Config, args: argparse.Namespace) -> int:
         print(f"  ❌ 메일 백엔드 — {exc}")
 
     try:
-        classifier = Classifier(config.gemini_api_key, config.gemini_model)
+        store = TicketStore(
+            config.supabase_url, config.supabase_service_key, config.supabase_bucket
+        )
+        gemini = resolve_gemini(store, config)
+        where = {"settings": "설정 화면", "env": "agent/.env"}
+        print(
+            f"  ℹ️  Gemini 키 출처 — {where.get(gemini.key_source, gemini.key_source)}"
+            f" ({gemini.masked_key})"
+        )
+        classifier = Classifier(gemini.api_key, gemini.model)
         models = classifier.available_models()
-        if config.gemini_model in models:
-            print(f"  ✅ Gemini API — 모델 '{config.gemini_model}' 사용 가능")
+        if gemini.model in models:
+            print(f"  ✅ Gemini API — 모델 '{gemini.model}' 사용 가능")
         else:
             ok = False
-            print(f"  ❌ Gemini API — 키는 유효하지만 '{config.gemini_model}' 을 쓸 수 없습니다.")
+            print(f"  ❌ Gemini API — 키는 유효하지만 '{gemini.model}' 을 쓸 수 없습니다.")
             print(f"     이 키로 쓸 수 있는 모델: {', '.join(models[:8]) or '(없음)'}")
-            print("     .env 의 GEMINI_MODEL 을 위 목록 중 하나로 바꾸세요.")
+            print("     설정 화면의 Gemini 모델을 위 목록 중 하나로 바꾸세요.")
     except Exception as exc:
         ok = False
         print(f"  ❌ Gemini API — {exc}")

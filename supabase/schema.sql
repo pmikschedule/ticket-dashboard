@@ -1226,3 +1226,171 @@ create trigger trg_meta_guard_status before update on public.ticket_meta
 alter table public.ticket_meta drop constraint if exists ticket_meta_hold_reason_check;
 alter table public.ticket_meta add constraint ticket_meta_hold_reason_check
   check (status <> 'on_hold' or (hold_reason is not null and btrim(hold_reason) <> ''));
+
+-- ============================================================================
+-- 17. 시스템 설정 — 비밀값(Gemini API 키)
+--
+-- 지금까지 Gemini 키는 Windows PC 의 agent/.env 에만 있었습니다. 키를 바꾸려면
+-- 그 PC 에 붙어야 했습니다. 운영자가 화면에서 등록·교체할 수 있게 옮깁니다.
+--
+-- **app_settings 에 넣으면 안 됩니다.** 그 표는 `settings_read` 정책이
+-- is_member() 이라 팀원 누구나 값을 읽습니다. API 키가 거기 있으면 로그인한
+-- 팀원 아무나 REST 로 긁어갈 수 있습니다.
+--
+-- 그래서 별도 표를 두고 **정책을 하나도 만들지 않습니다.** RLS 가 켜져 있는데
+-- 정책이 없으면 anon·authenticated 는 읽기도 쓰기도 전부 막힙니다.
+-- 접근 경로는 둘뿐입니다:
+--
+--   · 에이전트  — service_role 키. RLS 를 우회합니다.
+--   · 웹        — 아래 security definer 함수. 값을 **되돌려주지 않습니다.**
+--
+-- 즉 한 번 넣은 키는 화면으로 다시 꺼낼 수 없습니다. 확인이 필요하면 교체하세요.
+-- ============================================================================
+
+create table if not exists public.app_secrets (
+  key        text primary key,
+  value      text not null,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id) on delete set null
+);
+
+comment on table public.app_secrets is
+  '비밀값. 정책이 없으므로 웹에서 직접 읽을 수 없습니다 — 아래 함수만 경유합니다';
+
+alter table public.app_secrets enable row level security;
+
+-- 혹시 예전에 만들어 둔 정책이 있으면 지웁니다. 정책이 하나라도 있으면 뚫립니다.
+do $$
+declare pol record;
+begin
+  for pol in select policyname from pg_policies
+             where schemaname = 'public' and tablename = 'app_secrets'
+  loop
+    execute format('drop policy %I on public.app_secrets', pol.policyname);
+  end loop;
+end;
+$$;
+
+-- 표 권한을 명시적으로 정합니다.
+--
+-- Supabase 는 public 스키마의 새 표에 anon·authenticated·service_role 로
+-- 기본 권한을 자동으로 답니다. 그러면 이 표를 막는 것이 **RLS 하나뿐**이 됩니다.
+-- 나중에 누가 정책을 하나 잘못 만들면 그 순간 뚫립니다.
+-- GRANT 자체를 걷어내면 정책이 생겨도 못 읽습니다 (이중 방어).
+--
+-- security definer 함수는 소유자 권한으로 돌아가므로 이 REVOKE 의 영향을 받지
+-- 않습니다. 에이전트(service_role)에게는 명시적으로 권한을 줍니다 — 기본 권한에
+-- 기대면 다른 환경에서 조용히 안 읽힙니다.
+do $$
+begin
+  revoke all on table public.app_secrets from public;
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'revoke all on table public.app_secrets from anon';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute 'revoke all on table public.app_secrets from authenticated';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant select, insert, update, delete on table public.app_secrets to service_role';
+  end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 17.1 등록 상태만 돌려줍니다 — 값은 절대 나가지 않습니다
+--
+-- 마지막 4글자만 보여줍니다. 어느 키를 넣었는지 확인하기에는 충분하고,
+-- 그것만으로 키를 복원할 수는 없습니다.
+-- ----------------------------------------------------------------------------
+create or replace function public.app_secret_status()
+returns table (
+  key        text,
+  is_set     boolean,
+  hint       text,
+  length     int,
+  updated_at timestamptz,
+  updated_by text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception '관리자만 볼 수 있습니다';
+  end if;
+
+  return query
+  select
+    s.key,
+    true,
+    -- 값 자체는 나가지 않습니다. 끝 4글자만.
+    repeat('•', greatest(0, length(s.value) - 4)) || right(s.value, 4),
+    length(s.value),
+    s.updated_at,
+    coalesce(u.name, u.email)
+  from public.app_secrets s
+  left join public.users u on u.id = s.updated_by;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 17.2 등록·교체
+-- ----------------------------------------------------------------------------
+create or replace function public.set_app_secret(p_key text, p_value text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception '관리자만 등록할 수 있습니다';
+  end if;
+  if p_key is null or btrim(p_key) = '' then
+    raise exception '키 이름이 비어 있습니다';
+  end if;
+  if p_value is null or btrim(p_value) = '' then
+    raise exception '값이 비어 있습니다. 지우려면 clear_app_secret 을 쓰세요';
+  end if;
+
+  insert into public.app_secrets (key, value, updated_by)
+  values (btrim(p_key), btrim(p_value), auth.uid())
+  on conflict (key) do update
+    set value = excluded.value, updated_at = now(), updated_by = excluded.updated_by;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 17.3 삭제 — 지우면 에이전트는 .env 의 값으로 돌아갑니다
+-- ----------------------------------------------------------------------------
+create or replace function public.clear_app_secret(p_key text)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_admin() then
+    raise exception '관리자만 지울 수 있습니다';
+  end if;
+  delete from public.app_secrets where key = btrim(p_key);
+end;
+$$;
+
+-- anon 에게는 실행 권한을 주지 않습니다. 함수 안에서 is_admin() 을 보지만,
+-- 로그인하지 않은 요청이 애초에 함수에 닿지 않게 합니다.
+revoke all on function public.app_secret_status()               from public, anon;
+revoke all on function public.set_app_secret(text, text)        from public, anon;
+revoke all on function public.clear_app_secret(text)            from public, anon;
+grant execute on function public.app_secret_status()            to authenticated;
+grant execute on function public.set_app_secret(text, text)     to authenticated;
+grant execute on function public.clear_app_secret(text)         to authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 17.4 모델 등 비밀이 아닌 설정은 app_settings 에 둡니다
+-- ----------------------------------------------------------------------------
+insert into public.app_settings (key, value, description) values
+  ('gemini_model', 'gemini-2.5-flash',
+   '분류에 쓸 Gemini 모델. 비워 두면 에이전트가 .env 의 GEMINI_MODEL 을 씁니다.')
+on conflict (key) do nothing;
