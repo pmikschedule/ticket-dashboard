@@ -254,71 +254,167 @@ update public.users set role = 'admin' where email = 'admin@example.co.kr';
 
 ---
 
-## 8. Local PC 에이전트 설치
+## 8. 에이전트 설치 (Windows + Outlook)
 
-**관리자 PC(Windows + Outlook)에서** 진행합니다.
+아웃룩이 설치된 **Windows PC 또는 Windows Server** 에서 진행합니다.
 
-### 8-1. 설치
+> ### ⚠ 서버에 올릴 때 가장 먼저 알아야 할 것
+>
+> **아웃룩 COM 은 로그온한 데스크톱 세션에서만 동작합니다.**
+>
+> 작업 스케줄러에서 *"사용자의 로그온 여부에 관계없이 실행"* 을 고르면 세션 0
+> (비대화형)에서 돌게 되는데, 거기서는 아웃룩 COM 개체를 만들지 못하거나 응답
+> 없이 멈춥니다. 서버라고 습관적으로 그 옵션을 고르면 **조용히 아무 메일도
+> 수집되지 않습니다.**
+>
+> 반드시 **"사용자가 로그온할 때만 실행"** 을 고르고, 그 계정이 로그온된 상태를
+> 유지해야 합니다 (콘솔 로그온 유지 또는 자동 로그온).
+>
+> 아웃룩을 서비스처럼 무인 운영해야 한다면 COM 이 아니라 Microsoft Graph API 로
+> 바꿔야 합니다. 이 시스템은 `MailClient` 인터페이스 뒤에 아웃룩을 두었으므로
+> 교체 지점은 `agent/src/ticket_agent/mail.py` 한 곳입니다.
+
+### 8-1. 사전 준비
+
+| 항목 | 확인 |
+|---|---|
+| Python 3.10 이상 | `python --version`. 없으면 <https://www.python.org/downloads/> 에서 설치하며 **"Add python.exe to PATH"** 를 반드시 체크 |
+| Outlook 데스크톱 | 설치되어 있고, **프로필이 구성되어 메일이 실제로 보이는 상태** |
+| Git | `git --version`. 없으면 저장소를 ZIP 으로 내려받아도 됩니다 |
+
+아웃룩은 **실행해 둡니다.** 꺼져 있어도 COM 이 띄우긴 하지만, 프로필 선택 창이
+뜨면 거기서 멈춥니다.
+
+### 8-2. 코드 내려받기
 
 ```powershell
-cd agent
+cd C:\
+git clone https://github.com/pmikschedule/ticket-dashboard.git
+cd ticket-dashboard\agent
+```
+
+Git 이 없다면 <https://github.com/pmikschedule/ticket-dashboard> → **Code → Download ZIP**
+으로 받아 풀어도 됩니다.
+
+### 8-3. 설치
+
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 pip install -e .
 ```
 
-### 8-2. 환경설정
+`pywin32` 는 Windows 에서만 설치됩니다 (`pyproject.toml` 에 조건이 걸려 있습니다).
+설치 후 프롬프트 앞에 `(.venv)` 가 붙어 있어야 다음 단계의 `ticket-agent` 명령이
+잡힙니다.
+
+### 8-4. 환경설정
 
 ```powershell
 copy .env.example .env
 notepad .env
 ```
 
-최소한 이 값들을 채웁니다:
+채울 값은 **두 개뿐**입니다.
 
 | 키 | 값 |
 |---|---|
 | `SUPABASE_URL` | 5-1 의 Project URL |
-| `SUPABASE_SERVICE_KEY` | **5-3 의 Secret key** |
-| `GEMINI_API_KEY` | 5-4 의 키. **설정 화면에 등록했다면 비워 둬도 됩니다** |
-| `OUTLOOK_FOLDER` | 스캔할 폴더. 하위 폴더는 `받은 편지함/요청` |
-| `OUTLOOK_DONE_FOLDER` | 처리한 메일을 옮길 폴더 (비우면 읽음 표시만) |
+| `SUPABASE_SERVICE_KEY` | **5-3 의 Secret key** (`sb_secret_…`). Publishable 키가 아닙니다 |
 
-### 8-3. 아웃룩 폴더 준비
+나머지는 기본값으로 둡니다. 특히:
 
-받은편지함 아래에 `요청` 폴더를 만들고, 규칙(Rule)으로 요구사항 메일이 그 폴더로
+- `GEMINI_API_KEY` — **비워 둡니다.** 웹 설정 화면에 등록했다면 그쪽을 씁니다 (5-4 참고)
+- `AGENT_MAIL_BACKEND=auto` — Windows 에서는 자동으로 `outlook` 이 됩니다
+- `AGENT_SEND_MODE=display` — 회신은 사람이 확인하고 보냅니다. 자동 발송은 되돌릴 수 없습니다
+
+> `SUPABASE_SERVICE_KEY` 는 RLS 를 우회합니다. **이 파일 밖으로 나가면 안 됩니다** —
+> 저장소·웹·채팅 어디에도 넣지 마세요. `agent/.env` 는 `.gitignore` 에 걸려 있습니다.
+
+폴더를 나눠 스캔하려면 `OUTLOOK_FOLDER` 도 고칩니다 (8-5 참고).
+
+### 8-5. 아웃룩 폴더
+
+기본값은 `받은 편지함/요청` 입니다. 하위 폴더는 `/` 로 구분합니다.
+
+받은편지함 아래에 `요청` 폴더를 만들고 규칙(Rule)으로 요구사항 메일이 그리로
 들어가게 하거나, 담당자가 수동으로 옮깁니다.
 
-> 폴더를 나누지 않고 받은편지함 전체를 스캔해도 동작합니다 — LLM 이 일상 메일을 걸러냅니다.
-> 다만 메일 수만큼 API 비용이 나가므로 폴더를 나누는 편이 쌉니다.
+받은편지함 전체를 보려면 `OUTLOOK_FOLDER=받은 편지함` 으로 두면 됩니다 — LLM 이
+일상 메일을 걸러냅니다. 다만 **메일 수만큼 API 비용이 나가므로** 폴더를 나누는
+편이 쌉니다.
 
-### 8-4. 점검
+`OUTLOOK_DONE_FOLDER` 를 채우면 처리한 메일을 그 폴더로 옮기고, 비우면 읽음
+표시만 합니다.
+
+### 8-6. 점검
 
 ```powershell
 ticket-agent doctor
 ```
 
-Supabase · 메일 백엔드 · Gemini API 세 항목이 전부 ✅ 여야 합니다.
+세 항목이 전부 ✅ 여야 합니다.
 
-`GEMINI_MODEL` 이 키로 쓸 수 없는 모델이면, doctor 가 **실제 사용 가능한 모델 목록**을
-출력해 줍니다. 그중 하나로 `.env` 를 고치면 됩니다.
-
-### 8-5. 실행
-
-```powershell
-ticket-agent collect          # 한 번만 스캔 (처음엔 이걸로 확인)
-ticket-agent run              # 수집 + 발송 상시 실행
+```
+ℹ️  Gemini 키 출처 — 설정 화면 (•••••••••••7Z4k)
+✅ Supabase — 연결 성공
+✅ 메일 백엔드 — '받은 편지함/요청' 접근 성공 (표본 1건)
+✅ Gemini API — 모델 'gemini-2.5-flash' 사용 가능
 ```
 
-### 8-6. 상시 실행 등록 (작업 스케줄러)
+| 증상 | 원인 |
+|---|---|
+| `Gemini 키 출처 — agent/.env` | 웹 설정 화면에 등록이 안 된 것입니다. 등록했다면 화면에서 다시 확인하세요 |
+| 메일 백엔드 ❌ | 폴더 이름이 다르거나, 아웃룩이 꺼져 있거나, 프로필 선택 창에서 멈춰 있습니다 |
+| Gemini ❌ 모델 못 씀 | doctor 가 **쓸 수 있는 모델 목록**을 출력합니다. 웹 설정 화면의 Gemini 모델을 그중 하나로 바꾸세요 |
+
+### 8-7. 편하게 실행하기 (선택)
+
+`agent\start-agent.bat` 을 더블클릭하면 위 점검을 먼저 돌리고 통과할 때만
+실행합니다. 설치 여부·`.env` 누락·Secret 키 자리에 Publishable 키를 넣은 경우를
+미리 걸러 줍니다.
+
+```powershell
+start-agent.bat            # 점검 후 상시 실행
+start-agent.bat collect    # 한 번만 수집
+start-agent.bat doctor     # 점검만
+```
+
+> 이 스크립트의 화면 문구는 영어입니다. 배치 파일에 한글을 넣으면 CP949 콘솔에서
+> 깨지기 때문입니다. 설명은 이 문서에 있습니다.
+>
+> **창을 닫으면 에이전트도 멈춥니다.** 아웃룩 COM 이 데스크톱 세션을 필요로 하기
+> 때문에 이건 제약이 아니라 정상 동작입니다.
+
+### 8-8. 첫 수집
+
+```powershell
+ticket-agent collect
+```
+
+한 번만 스캔합니다. 결과가 요약으로 나오고, 웹의 **스크리닝** 화면에서 판정
+근거까지 확인할 수 있습니다 — 티켓이 되지 않은 메일도 왜 제외됐는지 남습니다.
+
+처음에는 `SCAN_LIMIT` 을 작게(예: 5) 두고 몇 건만 돌려 보는 편이 안전합니다.
+분류가 마음에 들지 않으면 웹 **설정 → 접수 판정 기준** 에서 고치면 되고,
+에이전트는 다음 스캔에서 바로 반영합니다. 재시작이 필요 없습니다.
+
+### 8-9. 상시 실행
+
+```powershell
+ticket-agent run       # 수집 + 수동 등록 큐 + 발송 큐
+```
+
+작업 스케줄러 등록:
 
 1. **작업 스케줄러** → 작업 만들기
-2. 트리거: **로그온할 때**
-3. 동작: 프로그램 시작
-   - 프로그램: `C:\...\agent\.venv\Scripts\ticket-agent.exe`
+2. 일반 → **"사용자가 로그온할 때만 실행"** ← 위 경고 참고. 반드시 이것
+3. 트리거: **로그온할 때**
+4. 동작: 프로그램 시작
+   - 프로그램: `C:\ticket-dashboard\agent\.venv\Scripts\ticket-agent.exe`
    - 인수: `run`
-   - 시작 위치: `C:\...\agent`
-4. 조건 → "컴퓨터의 AC 전원이 켜져 있는 경우에만 시작" **해제**
+   - 시작 위치: `C:\ticket-dashboard\agent`
+5. 조건 → "컴퓨터의 AC 전원이 켜져 있는 경우에만 시작" **해제**
 
 ---
 
