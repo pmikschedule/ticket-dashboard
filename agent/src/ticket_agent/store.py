@@ -72,6 +72,7 @@ class TicketStore:
 
         meta_payload = {
             "ticket_id": ticket_id,
+            "work_type": classification.work_type,
             "category": classification.category,
             "severity": classification.severity,
             "system_type": classification.system_type,
@@ -91,6 +92,113 @@ class TicketStore:
             ) from exc
 
         return ticket_id
+
+    # ── 시스템 등록표 ───────────────────────────────────────────────────────
+    def list_systems(self) -> list[dict[str, Any]]:
+        """LLM 스키마에 넣을 시스템 목록. 스캔 시작 때마다 읽습니다.
+
+        운영 중에 시스템을 추가해도 에이전트를 재시작할 필요가 없습니다.
+        읽기에 실패하면 빈 목록을 돌려줍니다 — 시스템 분류만 못 할 뿐,
+        메일 수집 자체가 멈추면 안 됩니다.
+        """
+        try:
+            response = (
+                self._client.table("systems")
+                .select("code, name, description")
+                .eq("is_active", True)
+                .order("sort_order")
+                .order("code")
+                .execute()
+            )
+            return response.data or []
+        except Exception as exc:
+            log.warning("시스템 등록표를 읽지 못했습니다. 미분류로 진행합니다: %s", exc)
+            return []
+
+    def intake_rules(self) -> tuple[list[str], list[str]]:
+        """접수 판정 기준 (include, exclude).
+
+        읽기에 실패하면 빈 목록을 돌려주고, classifier 가 기본 기준으로 넘어갑니다.
+        근거 없이 판정하게 두지는 않습니다.
+        """
+        try:
+            response = (
+                self._client.table("intake_rules")
+                .select("kind, content")
+                .eq("is_active", True)
+                .order("kind")
+                .order("sort_order")
+                .execute()
+            )
+            rows = response.data or []
+        except Exception as exc:
+            log.warning("접수 기준을 읽지 못했습니다. 기본 기준으로 진행합니다: %s", exc)
+            return [], []
+
+        include = [r["content"] for r in rows if r.get("kind") == "include"]
+        exclude = [r["content"] for r in rows if r.get("kind") == "exclude"]
+        return include, exclude
+
+    def setting(self, key: str, default: str = "") -> str:
+        """app_settings 한 건. 없거나 실패하면 기본값."""
+        try:
+            response = (
+                self._client.table("app_settings")
+                .select("value")
+                .eq("key", key)
+                .limit(1)
+                .execute()
+            )
+            rows = response.data or []
+            return (rows[0].get("value") if rows else None) or default
+        except Exception as exc:
+            log.warning("설정 '%s' 을 읽지 못했습니다. 기본값 사용: %s", key, exc)
+            return default
+
+    # ── 스크리닝 ────────────────────────────────────────────────────────────
+    def record_scanned_mail(
+        self,
+        mail: RawMail,
+        classification: Classification | None,
+        ticket_id: int | None,
+    ) -> None:
+        """스캔한 메일을 전부 남깁니다 — 티켓이 안 된 것도.
+
+        이게 없으면 LLM 이 잘못 걸러낸 메일은 어디에도 흔적이 남지 않아
+        아무도 오판을 알 수 없습니다. 실패해도 수집을 멈추지는 않습니다.
+        """
+        payload: dict[str, Any] = {
+            "message_id": mail.message_id,
+            "subject": mail.subject or "",
+            "body": mail.body or "",
+            "body_html": mail.body_html,
+            "sender_email": mail.sender_email or "",
+            "sender_name": mail.sender_name,
+            "received_at": _iso(mail.received_at),
+            "folder": mail.folder,
+            "outcome": "ticketed" if ticket_id else "excluded",
+            "ticket_id": ticket_id,
+        }
+        if classification is not None:
+            payload.update(
+                {
+                    "llm_is_request": classification.is_request,
+                    "llm_category": classification.category,
+                    "llm_severity": classification.severity,
+                    "llm_system": classification.system_type,
+                    "llm_confidence": classification.confidence,
+                    "llm_reason": classification.reason,
+                    "llm_error": classification.error,
+                    "llm_model": classification.model,
+                }
+            )
+
+        try:
+            self._client.table("scanned_mails").upsert(
+                payload, on_conflict="message_id"
+            ).execute()
+        except Exception as exc:
+            log.warning("스캔 기록 적재 실패 (%s): %s", mail.message_id, exc)
 
     def get_ticket(self, ticket_id: int) -> dict[str, Any] | None:
         response = (

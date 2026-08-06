@@ -65,6 +65,14 @@ class FakeClassifier:
     def __init__(self, results: dict[str, Classification]) -> None:
         self.results = results
         self.calls: list[str] = []
+        self.systems: list = []
+        self.intake_rules: tuple = ([], [], "include")
+
+    def set_systems(self, systems) -> None:
+        self.systems = list(systems)
+
+    def set_intake_rules(self, include_rules, exclude_rules, ambiguous_policy="include"):
+        self.intake_rules = (list(include_rules), list(exclude_rules), ambiguous_policy)
 
     def classify(self, mail: RawMail) -> Classification:
         self.calls.append(mail.message_id)
@@ -78,6 +86,10 @@ class FakeStore:
         self.uploads: list[tuple[int, Attachment]] = []
         self.next_id = 100
         self.fail_on_create = False
+        self.systems_registry: list = []
+        self.scanned: list = []
+        self.rules: tuple = ([], [])
+        self.settings: dict = {}
 
     def find_ticket_by_message_id(self, message_id: str):
         return self.existing.get(message_id)
@@ -93,6 +105,18 @@ class FakeStore:
     def upload_attachment(self, ticket_id, attachment):
         self.uploads.append((ticket_id, attachment))
         return f"{ticket_id}/{attachment.file_name}"
+
+    def list_systems(self):
+        return self.systems_registry
+
+    def intake_rules(self):
+        return self.rules
+
+    def setting(self, key, default=""):
+        return self.settings.get(key, default)
+
+    def record_scanned_mail(self, mail, classification, ticket_id):
+        self.scanned.append((mail.message_id, classification, ticket_id))
 
 
 def request(**overrides) -> Classification:
@@ -228,3 +252,66 @@ class TestCollector:
     def test_summary_is_human_readable(self):
         collector, _, _ = build([make_mail("m-9")], {"m-9": request()})
         assert "신규 티켓 1건" in collector.run_once().summary()
+
+
+class TestScreening:
+    """스캔한 메일을 전부 남기는지 — LLM 오판을 사람이 구제할 수 있어야 합니다."""
+
+    def test_ticketed_mail_is_recorded(self):
+        collector, _, store = build([make_mail("s-1")], {"s-1": request()})
+        collector.run_once()
+
+        assert len(store.scanned) == 1
+        message_id, classification, ticket_id = store.scanned[0]
+        assert message_id == "s-1"
+        assert ticket_id is not None
+        assert classification.is_request is True
+
+    def test_rejected_mail_is_still_recorded(self):
+        """이게 핵심입니다. 예전에는 로그만 남고 사라졌습니다."""
+        collector, _, store = build([make_mail("s-2")], {"s-2": not_request()})
+        collector.run_once()
+
+        assert len(store.scanned) == 1
+        message_id, classification, ticket_id = store.scanned[0]
+        assert message_id == "s-2"
+        assert ticket_id is None                 # 티켓은 안 만들지만
+        assert classification.is_request is False  # 판정 근거는 남습니다
+        assert classification.reason == "일상 대화"
+
+    def test_duplicate_is_not_recorded_again(self):
+        store = FakeStore(existing={"s-3": 7})
+        collector = Collector(make_config(), FakeMail([make_mail("s-3")]), FakeClassifier({}), store)
+        collector.run_once()
+        assert store.scanned == []
+
+
+class TestSettingsRefresh:
+    """설정을 바꿔도 에이전트를 재시작하지 않아야 합니다."""
+
+    def test_systems_are_reloaded_each_scan(self):
+        mail = FakeMail([make_mail("c-1")])
+        store = FakeStore()
+        store.systems_registry = [{"code": "erp", "name": "ERP"}]
+        classifier = FakeClassifier({"c-1": request()})
+        Collector(make_config(), mail, classifier, store).run_once()
+
+        assert classifier.systems == [{"code": "erp", "name": "ERP"}]
+
+    def test_intake_rules_are_reloaded_each_scan(self):
+        mail = FakeMail([make_mail("c-2")])
+        store = FakeStore()
+        store.rules = (["결제 오류"], ["뉴스레터"])
+        store.settings = {"intake_ambiguous_policy": "exclude"}
+        classifier = FakeClassifier({"c-2": request()})
+        Collector(make_config(), mail, classifier, store).run_once()
+
+        assert classifier.intake_rules == (["결제 오류"], ["뉴스레터"], "exclude")
+
+    def test_missing_setting_falls_back_to_include(self):
+        mail = FakeMail([make_mail("c-3")])
+        store = FakeStore()
+        classifier = FakeClassifier({"c-3": request()})
+        Collector(make_config(), mail, classifier, store).run_once()
+
+        assert classifier.intake_rules[2] == "include"

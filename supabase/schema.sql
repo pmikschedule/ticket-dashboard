@@ -19,10 +19,11 @@ create extension if not exists pgcrypto;
 --    enum 타입 대신 check 제약을 씁니다. 값을 추가할 때 마이그레이션이 가볍습니다.
 -- ----------------------------------------------------------------------------
 -- role        : admin | member
--- status      : intake | triage | in_progress | testing | deploy | done
+-- status      : intake | triage | in_progress | testing | deploy | done  (라이프사이클 6단계)
+-- work_type   : incident | maintenance | development                      (대분류. 15.2 참조)
 -- severity    : critical | high | medium | low
--- category    : error | improve | fix | new
--- system_type : erp | api | web_app | infra | etc
+-- category    : error | improve | fix | new                               (중분류)
+-- system_type : public.systems 등록표를 따릅니다 (고정 목록 아님. 15.1 참조)
 
 -- ----------------------------------------------------------------------------
 -- 2. users — Admin 및 팀원 계정 정보
@@ -517,3 +518,382 @@ alter view public.ticket_lead_times set (security_invoker = on);
 -- 나를 관리자로 지정 (최초 로그인 후 1회):
 --   update public.users set role = 'admin' where email = 'admin@example.com';
 -- ----------------------------------------------------------------------------
+
+-- ============================================================================
+-- 15. 확장 — 대분류 · 시스템 등록 · 메일 스크리닝 · MTTR
+--
+-- 여기부터는 14장까지가 만든 것 위에 얹는 변경입니다.
+-- 앞부분과 마찬가지로 여러 번 실행해도 안전합니다.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 15.1 시스템 종류 등록 (하드코딩 제거)
+--
+-- 초기값을 넣지 않습니다. 운영자가 설정 화면에서 직접 등록합니다.
+-- ticket_meta.system_type 은 이 표의 code 를 담지만 **외래키를 걸지 않습니다.**
+-- 시스템을 목록에서 지웠다고 과거 티켓의 분류가 사라지면 안 되기 때문입니다.
+-- 등록되지 않은 코드는 화면에서 '미분류' 로 보입니다.
+-- ----------------------------------------------------------------------------
+create table if not exists public.systems (
+  id          bigserial primary key,
+  code        text unique not null,   -- LLM 이 고르는 값. 영문 소문자·숫자·밑줄 권장
+  name        text not null,          -- 화면 표시명
+  description text,                   -- LLM 에게 주는 판단 기준. 비워도 됩니다
+  sort_order  int not null default 0,
+  is_active   boolean not null default true,
+  created_at  timestamptz not null default now()
+);
+
+comment on table public.systems is
+  '시스템 종류 등록표. 초기값 없음 — 운영자가 설정 화면에서 등록합니다';
+comment on column public.systems.description is
+  'LLM 이 이 시스템을 고를 기준. 예: "회계·인사·재고 등 기간계 ERP". 비워도 동작합니다';
+
+create index if not exists idx_systems_active on public.systems (is_active, sort_order);
+
+-- ----------------------------------------------------------------------------
+-- 15.2 ticket_meta 확장
+-- ----------------------------------------------------------------------------
+
+-- 대분류. 라이프사이클 6단계는 셋 다 동일하고, 관리 방식만 갈립니다.
+--   incident    장애      — MTTR 측정 대상
+--   maintenance 유지보수  — 단순 수정·개선. 주간 현황 대상
+--   development 신규개발  — 공수 1주일 이상. 관리자가 수동 승격. Gantt 대상
+alter table public.ticket_meta
+  add column if not exists work_type text not null default 'maintenance';
+
+do $$
+begin
+  alter table public.ticket_meta
+    add constraint ticket_meta_work_type_check
+    check (work_type in ('incident', 'maintenance', 'development'));
+exception when duplicate_object then null;
+end $$;
+
+-- 공수(사람일). '1주일 이상이면 신규개발' 판단의 근거이자 Gantt 의 입력값입니다.
+alter table public.ticket_meta add column if not exists estimated_days numeric(5,1);
+
+-- 신규개발 승격 시점. "접수 후 며칠 만에 프로젝트가 됐는지" 를 답합니다.
+alter table public.ticket_meta add column if not exists promoted_at timestamptz;
+alter table public.ticket_meta
+  add column if not exists promoted_by uuid references public.users(id) on delete set null;
+
+-- system_type 은 이제 등록표를 따르므로 고정 목록 제약을 걷어냅니다.
+-- 미분류를 표현해야 하므로 null 도 허용합니다.
+alter table public.ticket_meta drop constraint if exists ticket_meta_system_type_check;
+alter table public.ticket_meta alter column system_type drop not null;
+alter table public.ticket_meta alter column system_type drop default;
+
+-- 기존 데이터의 대분류 백필: 오류는 장애로, 나머지는 유지보수로.
+-- (신규개발 승격은 사람이 판단하므로 자동으로 올리지 않습니다)
+update public.ticket_meta
+set work_type = case when category = 'error' then 'incident' else 'maintenance' end
+where work_type = 'maintenance' and category = 'error';
+
+create index if not exists idx_meta_work_type on public.ticket_meta (work_type);
+
+-- 승격 시점 자동 기록
+-- INSERT 트리거에서는 OLD 가 없으므로 TG_OP 로 갈라야 합니다.
+-- (log_status_change 와 같은 이유로 같은 형태를 씁니다)
+create or replace function public.stamp_promotion()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  was_development boolean;
+begin
+  was_development := (tg_op = 'UPDATE' and old.work_type = 'development');
+
+  if new.work_type = 'development' and not was_development then
+    new.promoted_at := coalesce(new.promoted_at, now());
+    new.promoted_by := coalesce(new.promoted_by, auth.uid());
+  elsif new.work_type <> 'development' then
+    -- 되돌리면 승격 기록도 지웁니다. 남겨 두면 통계가 오염됩니다.
+    new.promoted_at := null;
+    new.promoted_by := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_meta_promotion on public.ticket_meta;
+create trigger trg_meta_promotion before insert or update on public.ticket_meta
+  for each row execute function public.stamp_promotion();
+
+-- ----------------------------------------------------------------------------
+-- 15.3 tickets 확장 — 계획 일정 (Gantt 입력값)
+-- ----------------------------------------------------------------------------
+alter table public.tickets add column if not exists planned_start_date date;
+alter table public.tickets add column if not exists planned_end_date date;
+
+-- ----------------------------------------------------------------------------
+-- 15.4 메일 스크리닝 — 스캔한 메일을 전부 남깁니다
+--
+-- 지금까지는 LLM 이 '요청 아님' 으로 판정한 메일이 어디에도 남지 않았습니다.
+-- 오판이 있어도 아무도 알 수 없었습니다. 스캔한 것을 모두 여기 적재하고,
+-- 사람이 검토 화면에서 티켓으로 전환하거나 제외를 확정합니다.
+-- ----------------------------------------------------------------------------
+create table if not exists public.scanned_mails (
+  id             bigserial primary key,
+  message_id     text unique not null,        -- Outlook EntryID. 중복 스캔 차단
+  subject        text not null default '',
+  body           text not null default '',
+  body_html      text,
+  sender_email   text not null default '',
+  sender_name    text,
+  received_at    timestamptz,
+  folder         text,
+  scanned_at     timestamptz not null default now(),
+
+  -- LLM 판정 결과 (티켓이 되지 않은 건도 근거를 남깁니다)
+  llm_is_request boolean,
+  llm_category   text,
+  llm_severity   text,
+  llm_system     text,
+  llm_confidence numeric(3,2),
+  llm_reason     text,
+  llm_error      text,
+  llm_model      text,
+
+  -- 처리 결과
+  outcome     text not null default 'excluded'
+                check (outcome in ('ticketed', 'excluded')),
+  ticket_id   bigint references public.tickets(id) on delete set null,
+  reviewed_by uuid references public.users(id) on delete set null,
+  reviewed_at timestamptz,
+  review_note text
+);
+
+comment on table public.scanned_mails is
+  '스캔한 메일 전부. LLM 이 걸러낸 것도 남겨 사람이 오판을 구제할 수 있게 합니다';
+comment on column public.scanned_mails.reviewed_at is
+  'null 이면 사람이 아직 보지 않은 것. 검토 화면의 기본 필터입니다';
+
+create index if not exists idx_scanned_outcome on public.scanned_mails (outcome, scanned_at desc);
+create index if not exists idx_scanned_unreviewed
+  on public.scanned_mails (scanned_at desc) where (reviewed_at is null);
+
+-- ----------------------------------------------------------------------------
+-- 15.5 RLS — 기존과 같은 패턴
+-- ----------------------------------------------------------------------------
+alter table public.systems       enable row level security;
+alter table public.scanned_mails enable row level security;
+
+drop policy if exists systems_read         on public.systems;
+drop policy if exists systems_write_admin  on public.systems;
+drop policy if exists systems_update_admin on public.systems;
+drop policy if exists systems_delete_admin on public.systems;
+
+create policy systems_read on public.systems
+  for select using (public.is_member());
+create policy systems_write_admin on public.systems
+  for insert with check (public.is_admin());
+create policy systems_update_admin on public.systems
+  for update using (public.is_admin()) with check (public.is_admin());
+create policy systems_delete_admin on public.systems
+  for delete using (public.is_admin());
+
+drop policy if exists scanned_read         on public.scanned_mails;
+drop policy if exists scanned_update_admin on public.scanned_mails;
+drop policy if exists scanned_delete_admin on public.scanned_mails;
+
+create policy scanned_read on public.scanned_mails
+  for select using (public.is_member());
+-- 적재는 에이전트(service_role)만 합니다. 검토 결과 갱신은 관리자.
+create policy scanned_update_admin on public.scanned_mails
+  for update using (public.is_admin()) with check (public.is_admin());
+create policy scanned_delete_admin on public.scanned_mails
+  for delete using (public.is_admin());
+
+-- ----------------------------------------------------------------------------
+-- 15.6 통계 뷰 갱신 — MTTA(대기) / MTTR(수리) 분리
+--
+--   접수 → 착수 = 대기 시간 (MTTA)  : 메일이 들어온 뒤 손대기까지
+--   착수 → 완료 = 수리 시간 (MTTR)  : 팀이 실제로 고치는 데 걸린 시간
+--   접수 → 완료 = 리드타임          : 요청자가 겪은 전체 시간
+--
+-- 하나만 재면 "우리가 느린 건지, 접수가 늦게 전달된 건지" 를 구분할 수 없습니다.
+-- 착수 시점은 상태가 처음 in_progress 로 바뀐 때입니다.
+-- ----------------------------------------------------------------------------
+drop view if exists public.ticket_lead_times;
+
+create view public.ticket_lead_times as
+with first_progress as (
+  select ticket_id, min(changed_at) as started_at
+  from public.ticket_status_history
+  where to_status = 'in_progress'
+  group by ticket_id
+)
+select
+  t.id                          as ticket_id,
+  t.subject,
+  t.received_at,
+  t.due_date,
+  t.planned_start_date,
+  t.planned_end_date,
+  m.status,
+  m.work_type,
+  m.severity,
+  m.system_type,
+  m.category,
+  m.assignee_id,
+  m.estimated_days,
+  m.promoted_at,
+  m.completed_at,
+  f.started_at,
+  case when f.started_at is not null
+       then extract(epoch from (f.started_at - t.received_at)) / 3600.0
+  end                           as wait_hours,
+  case when m.completed_at is not null and f.started_at is not null
+       then extract(epoch from (m.completed_at - f.started_at)) / 3600.0
+  end                           as repair_hours,
+  case when m.completed_at is not null
+       then extract(epoch from (m.completed_at - t.received_at)) / 3600.0
+  end                           as lead_time_hours
+from public.tickets t
+join public.ticket_meta m on m.ticket_id = t.id
+left join first_progress f on f.ticket_id = t.id;
+
+alter view public.ticket_lead_times set (security_invoker = on);
+
+-- ----------------------------------------------------------------------------
+-- 15.7 접수 판정 기준 — 코드에서 설정으로
+--
+-- 지금까지 "무엇을 요청 메일로 볼 것인가" 는 에이전트 프롬프트 문자열에
+-- 박혀 있었습니다. 운영자는 기준을 볼 수도, 고칠 수도 없었습니다.
+-- 조직마다 '요청' 의 범위가 다르므로(단순 문의를 티켓으로 볼 것인가 등)
+-- 시스템 종류와 같은 이유로 설정으로 뺍니다.
+--
+-- 에이전트는 스캔할 때마다 읽어 프롬프트에 넣습니다. 재시작이 필요 없습니다.
+-- ----------------------------------------------------------------------------
+create table if not exists public.intake_rules (
+  id         bigserial primary key,
+  kind       text not null check (kind in ('include', 'exclude')),
+  content    text not null,
+  sort_order int not null default 0,
+  is_active  boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id) on delete set null,
+  unique (kind, content)
+);
+
+comment on table public.intake_rules is
+  'LLM 이 요청 메일을 판정하는 기준. include=접수 대상, exclude=제외 대상';
+
+create index if not exists idx_intake_rules_active on public.intake_rules (kind, is_active, sort_order);
+
+-- 기준 변경 이력. "언제부터 판정이 달라졌는지" 를 추적합니다.
+-- 판정 품질이 갑자기 나빠졌을 때 기준 변경 때문인지 확인할 근거입니다.
+create table if not exists public.intake_rule_history (
+  id         bigserial primary key,
+  rule_id    bigint,
+  action     text not null check (action in ('created', 'updated', 'deleted')),
+  kind       text,
+  content    text,
+  is_active  boolean,
+  changed_by uuid references public.users(id) on delete set null,
+  changed_at timestamptz not null default now()
+);
+
+create index if not exists idx_rule_history_at on public.intake_rule_history (changed_at desc);
+
+create or replace function public.log_intake_rule_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'DELETE' then
+    insert into public.intake_rule_history (rule_id, action, kind, content, is_active, changed_by)
+    values (old.id, 'deleted', old.kind, old.content, old.is_active, auth.uid());
+    return old;
+  end if;
+
+  insert into public.intake_rule_history (rule_id, action, kind, content, is_active, changed_by)
+  values (
+    new.id,
+    case when tg_op = 'INSERT' then 'created' else 'updated' end,
+    new.kind, new.content, new.is_active, auth.uid()
+  );
+  if tg_op = 'UPDATE' then
+    new.updated_at := now();
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_intake_rules_log_ins on public.intake_rules;
+create trigger trg_intake_rules_log_ins after insert on public.intake_rules
+  for each row execute function public.log_intake_rule_change();
+
+drop trigger if exists trg_intake_rules_log_upd on public.intake_rules;
+create trigger trg_intake_rules_log_upd before update on public.intake_rules
+  for each row execute function public.log_intake_rule_change();
+
+drop trigger if exists trg_intake_rules_log_del on public.intake_rules;
+create trigger trg_intake_rules_log_del after delete on public.intake_rules
+  for each row execute function public.log_intake_rule_change();
+
+-- 지금까지 코드에 박혀 있던 기준을 그대로 초기값으로 넣습니다.
+-- 시스템 종류와 달리 비워 두면 LLM 이 아무 근거 없이 판정하게 되므로,
+-- 현재 동작하는 기준을 보이게 만들어 두고 운영자가 고치도록 합니다.
+insert into public.intake_rules (kind, content, sort_order) values
+  ('include', '시스템 오류·장애 신고', 10),
+  ('include', '기능 개선, 수정, 신규 개발 요청', 20),
+  ('include', '데이터 정정, 권한 부여처럼 IT팀의 작업이 필요한 요청', 30),
+  ('exclude', '일상 대화, 인사, 회식·일정 공지', 10),
+  ('exclude', '광고, 뉴스레터, 스팸, 자동 발송 알림', 20),
+  ('exclude', '이미 처리된 건에 대한 단순 감사 인사', 30),
+  ('exclude', '회의록·자료 공유처럼 작업 요청이 아닌 것', 40)
+on conflict (kind, content) do nothing;
+
+-- ----------------------------------------------------------------------------
+-- 15.8 일반 설정 (키-값)
+-- ----------------------------------------------------------------------------
+create table if not exists public.app_settings (
+  key         text primary key,
+  value       text,
+  description text,
+  updated_at  timestamptz not null default now(),
+  updated_by  uuid references public.users(id) on delete set null
+);
+
+insert into public.app_settings (key, value, description) values
+  ('intake_ambiguous_policy', 'include',
+   '판단이 애매할 때. include=접수한다(권장) / exclude=제외한다. '
+   '메일은 놓치면 복구되지 않고, 잘못 접수된 티켓은 지우면 되므로 include 를 권합니다.'),
+  ('development_threshold_days', '5',
+   '신규개발로 볼 공수 기준(사람일). 화면에서 승격 안내에 쓰입니다. 판단 자체는 사람이 합니다.')
+on conflict (key) do nothing;
+
+-- ----------------------------------------------------------------------------
+-- 15.9 RLS — 설정은 읽기 전원, 쓰기는 관리자
+-- ----------------------------------------------------------------------------
+alter table public.intake_rules        enable row level security;
+alter table public.intake_rule_history enable row level security;
+alter table public.app_settings        enable row level security;
+
+drop policy if exists rules_read         on public.intake_rules;
+drop policy if exists rules_write_admin  on public.intake_rules;
+drop policy if exists rules_update_admin on public.intake_rules;
+drop policy if exists rules_delete_admin on public.intake_rules;
+
+create policy rules_read on public.intake_rules
+  for select using (public.is_member());
+create policy rules_write_admin on public.intake_rules
+  for insert with check (public.is_admin());
+create policy rules_update_admin on public.intake_rules
+  for update using (public.is_admin()) with check (public.is_admin());
+create policy rules_delete_admin on public.intake_rules
+  for delete using (public.is_admin());
+
+drop policy if exists rule_history_read on public.intake_rule_history;
+create policy rule_history_read on public.intake_rule_history
+  for select using (public.is_member());
+
+drop policy if exists settings_read         on public.app_settings;
+drop policy if exists settings_write_admin  on public.app_settings;
+drop policy if exists settings_update_admin on public.app_settings;
+
+create policy settings_read on public.app_settings
+  for select using (public.is_member());
+create policy settings_write_admin on public.app_settings
+  for insert with check (public.is_admin());
+create policy settings_update_admin on public.app_settings
+  for update using (public.is_admin()) with check (public.is_admin());

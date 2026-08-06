@@ -29,8 +29,9 @@ from .constants import (
     FALLBACK_CATEGORY,
     FALLBACK_SEVERITY,
     FALLBACK_SYSTEM_TYPE,
+    FALLBACK_WORK_TYPE,
+    LLM_WORK_TYPES,
     SEVERITIES,
-    SYSTEM_TYPES,
 )
 from .models import Classification, RawMail
 from .textutil import first_line, prepare_body_for_llm
@@ -45,24 +46,19 @@ SYSTEM_PROMPT = """\
 시스템 요구사항·장애 신고인지 판별하고, 맞다면 티켓 메타데이터를 추출합니다.
 
 ## 1단계 — 요구사항 메일인가?
-is_request = true 로 판정하는 경우:
-- 시스템 오류·장애 신고
-- 기능 개선, 수정, 신규 개발 요청
-- 데이터 정정, 권한 부여처럼 IT팀의 작업이 필요한 요청
-
-is_request = false 로 판정하는 경우:
-- 일상 대화, 인사, 회식·일정 공지
-- 광고, 뉴스레터, 스팸, 자동 발송 알림
-- 이미 처리된 건에 대한 단순 감사 인사
-- 회의록·자료 공유처럼 작업 요청이 아닌 것
-
-애매하면 true 로 판정하십시오. 놓친 요청은 복구할 수 없지만,
-잘못 접수된 티켓은 담당자가 화면에서 지우면 됩니다.
+{intake_criteria}
 
 ## 2단계 — 메타데이터 추출
 is_request = true 일 때만 의미가 있습니다.
 
-category — 요청의 성격
+work_type — 대분류. **둘 중에서만** 고릅니다.
+  incident    : 동작하던 것이 멈췄거나 오작동. 지금 업무가 막혀 있음
+  maintenance : 그 외 전부 — 수정·개선·신규 요청
+
+  공수가 커서 '신규개발' 로 관리해야 하는 건은 관리자가 나중에 직접 올립니다.
+  당신은 공수를 판단하지 마십시오. 판단할 정보가 없습니다.
+
+category — 요청의 성격 (중분류)
   error   : 동작하던 것이 동작하지 않음 (오류·장애)
   improve : 동작은 하지만 더 낫게 (개선)
   fix     : 잘못된 데이터·설정의 정정 (수정)
@@ -74,7 +70,7 @@ severity — 업무 영향도
   medium   : 일부 기능 불편, 업무는 계속 가능 (기본값)
   low      : 단순 문의, 표시 오류, 개선 제안
 
-system_type — 대상 시스템. 아래 목록에서만 고릅니다.
+system_type — 대상 시스템. **아래 등록된 목록에서만** 고릅니다.
 {system_type_guide}
 
 due_date — 본문에 명시된 요청 기한이 있을 때만 YYYY-MM-DD 로.
@@ -96,55 +92,138 @@ reason — 그렇게 판정한 이유 한 문장.
 """
 
 
-def build_system_prompt(system_types: Sequence[str] = SYSTEM_TYPES) -> str:
-    """시스템 종류는 나중에 사용자가 설정 화면에서 등록하게 됩니다.
-    그때 DB 값을 그대로 넘길 수 있도록 프롬프트를 함수로 만들어 둡니다."""
-    if system_types:
-        guide = "\n".join(f"  {value}" for value in system_types)
+# 설정이 비어 있을 때 쓰는 최소 기준.
+# DB 를 못 읽었다고 아무 근거 없이 판정하게 두지는 않습니다.
+DEFAULT_INCLUDE_RULES = (
+    "시스템 오류·장애 신고",
+    "기능 개선, 수정, 신규 개발 요청",
+    "데이터 정정, 권한 부여처럼 IT팀의 작업이 필요한 요청",
+)
+DEFAULT_EXCLUDE_RULES = (
+    "일상 대화, 인사, 회식·일정 공지",
+    "광고, 뉴스레터, 스팸, 자동 발송 알림",
+    "이미 처리된 건에 대한 단순 감사 인사",
+    "회의록·자료 공유처럼 작업 요청이 아닌 것",
+)
+
+
+def build_intake_criteria(
+    include_rules: Sequence[str] = (),
+    exclude_rules: Sequence[str] = (),
+    ambiguous_policy: str = "include",
+) -> str:
+    """접수 판정 기준을 프롬프트 조각으로 만듭니다 (public.intake_rules).
+
+    비어 있으면 기본 기준을 씁니다 — 근거 없는 판정보다 낫습니다.
+    `ambiguous_policy` 는 애매할 때의 편향입니다. 기본값 include 의 근거는
+    "메일은 놓치면 복구되지 않지만, 잘못 접수된 티켓은 지우면 된다" 입니다.
+    """
+    include = [r for r in include_rules if str(r).strip()] or list(DEFAULT_INCLUDE_RULES)
+    exclude = [r for r in exclude_rules if str(r).strip()] or list(DEFAULT_EXCLUDE_RULES)
+
+    if ambiguous_policy == "exclude":
+        tail = (
+            "애매하면 false 로 판정하십시오. 확실한 요청만 접수합니다."
+        )
     else:
-        guide = "  (등록된 시스템이 없습니다. 판단하지 말고 etc 를 쓰십시오.)"
-    return SYSTEM_PROMPT.format(system_type_guide=guide)
+        tail = (
+            "애매하면 true 로 판정하십시오. 놓친 요청은 복구할 수 없지만,\n"
+            "잘못 접수된 티켓은 담당자가 화면에서 지우면 됩니다."
+        )
+
+    lines = ["is_request = true 로 판정하는 경우:"]
+    lines += [f"- {r}" for r in include]
+    lines += ["", "is_request = false 로 판정하는 경우:"]
+    lines += [f"- {r}" for r in exclude]
+    lines += ["", tail]
+    return "\n".join(lines)
 
 
-def build_response_schema(system_types: Sequence[str] = SYSTEM_TYPES) -> dict[str, Any]:
+def build_system_prompt(
+    systems: Sequence[Any] = (),
+    include_rules: Sequence[str] = (),
+    exclude_rules: Sequence[str] = (),
+    ambiguous_policy: str = "include",
+) -> str:
+    """시스템 종류는 운영자가 설정 화면에서 등록합니다 (public.systems).
+
+    `systems` 는 문자열 코드 목록이거나 {"code","name","description"} 딕셔너리 목록입니다.
+    설명이 있으면 LLM 이 고를 근거로 함께 넘깁니다.
+    """
+    lines = []
+    for entry in systems:
+        if isinstance(entry, dict):
+            code = str(entry.get("code") or "").strip()
+            if not code:
+                continue
+            label = str(entry.get("name") or code).strip()
+            note = str(entry.get("description") or "").strip()
+            lines.append(f"  {code} : {label}" + (f" — {note}" if note else ""))
+        else:
+            lines.append(f"  {entry}")
+
+    guide = "\n".join(lines) if lines else (
+        "  (등록된 시스템이 없습니다. system_type 항목은 응답에서 생략하십시오.)"
+    )
+    return SYSTEM_PROMPT.format(
+        system_type_guide=guide,
+        intake_criteria=build_intake_criteria(include_rules, exclude_rules, ambiguous_policy),
+    )
+
+
+def system_codes(systems: Sequence[Any]) -> list[str]:
+    """문자열 목록이든 딕셔너리 목록이든 코드만 뽑아냅니다."""
+    codes = []
+    for entry in systems:
+        code = str(entry.get("code") if isinstance(entry, dict) else entry or "").strip()
+        if code:
+            codes.append(code)
+    return codes
+
+
+def build_response_schema(systems: Sequence[Any] = ()) -> dict[str, Any]:
     """Gemini 가 받는 JSON Schema.
 
     `additionalProperties` 나 union 타입(`["string","null"]`)은 쓰지 않습니다.
     Gemini 의 스키마 지원 범위를 벗어나면 요청 자체가 거절됩니다.
     없는 값은 null 대신 **빈 문자열**로 받고 파서가 None 으로 바꿉니다.
+
+    등록된 시스템이 없으면 `system_type` 항목 자체를 넣지 않습니다.
+    빈 enum 은 스키마 위반이고, 억지로 기본값을 넣으면 없는 분류가 생깁니다.
     """
-    return {
-        "type": "object",
-        "properties": {
-            "is_request": {
-                "type": "boolean",
-                "description": "시스템 요구사항·장애 신고 메일이면 true",
-            },
-            "title": {"type": "string", "description": "티켓 제목. 60자 이내"},
-            "category": {"type": "string", "enum": list(CATEGORIES)},
-            "severity": {"type": "string", "enum": list(SEVERITIES)},
-            "system_type": {
-                "type": "string",
-                "enum": list(system_types) if system_types else [FALLBACK_SYSTEM_TYPE],
-            },
-            "due_date": {
-                "type": "string",
-                "description": "요청 기한 YYYY-MM-DD. 본문에 없으면 빈 문자열",
-            },
-            "confidence": {"type": "number"},
-            "reason": {"type": "string"},
+    properties: dict[str, Any] = {
+        "is_request": {
+            "type": "boolean",
+            "description": "시스템 요구사항·장애 신고 메일이면 true",
         },
-        "required": [
-            "is_request",
-            "title",
-            "category",
-            "severity",
-            "system_type",
-            "due_date",
-            "confidence",
-            "reason",
-        ],
+        "title": {"type": "string", "description": "티켓 제목. 60자 이내"},
+        "work_type": {"type": "string", "enum": list(LLM_WORK_TYPES)},
+        "category": {"type": "string", "enum": list(CATEGORIES)},
+        "severity": {"type": "string", "enum": list(SEVERITIES)},
+        "due_date": {
+            "type": "string",
+            "description": "요청 기한 YYYY-MM-DD. 본문에 없으면 빈 문자열",
+        },
+        "confidence": {"type": "number"},
+        "reason": {"type": "string"},
     }
+    required = [
+        "is_request",
+        "title",
+        "work_type",
+        "category",
+        "severity",
+        "due_date",
+        "confidence",
+        "reason",
+    ]
+
+    codes = system_codes(systems)
+    if codes:
+        properties["system_type"] = {"type": "string", "enum": codes}
+        required.append("system_type")
+
+    return {"type": "object", "properties": properties, "required": required}
 
 
 def build_user_message(mail: RawMail) -> str:
@@ -185,6 +264,7 @@ def _fallback(mail: RawMail, error: str, model: str | None = None) -> Classifica
     return Classification(
         is_request=True,  # 판별을 못 했으므로 사람이 보게 둡니다
         title=title[:200],
+        work_type=FALLBACK_WORK_TYPE,
         category=FALLBACK_CATEGORY,
         severity=FALLBACK_SEVERITY,
         system_type=FALLBACK_SYSTEM_TYPE,
@@ -200,7 +280,7 @@ def parse_response(
     payload: dict[str, Any],
     mail: RawMail,
     model: str,
-    system_types: Sequence[str] = SYSTEM_TYPES,
+    systems: Sequence[Any] = (),
 ) -> Classification:
     """LLM JSON 을 Classification 으로. 스키마를 벗어난 값은 기본값으로 눌러 담습니다."""
     title = str(payload.get("title") or "").strip()
@@ -215,14 +295,18 @@ def parse_response(
 
     reason = str(payload.get("reason") or "").strip()
 
+    # 등록되지 않은 코드는 버립니다. 없는 분류를 만드는 것보다 미분류가 낫습니다.
+    codes = system_codes(systems)
+    raw_system = str(payload.get("system_type") or "").strip().lower()
+    system_type = raw_system if raw_system in codes else FALLBACK_SYSTEM_TYPE
+
     return Classification(
         is_request=bool(payload.get("is_request", True)),
         title=title[:200],
+        work_type=_clean_enum(payload.get("work_type"), LLM_WORK_TYPES, FALLBACK_WORK_TYPE),
         category=_clean_enum(payload.get("category"), CATEGORIES, FALLBACK_CATEGORY),
         severity=_clean_enum(payload.get("severity"), SEVERITIES, FALLBACK_SEVERITY),
-        system_type=_clean_enum(
-            payload.get("system_type"), system_types or (), FALLBACK_SYSTEM_TYPE
-        ),
+        system_type=system_type,
         due_date=_clean_due_date(payload.get("due_date")),
         confidence=confidence,
         reason=reason[:500] or None,
@@ -249,19 +333,43 @@ class Classifier:
         self,
         api_key: str,
         model: str,
-        system_types: Sequence[str] = SYSTEM_TYPES,
+        systems: Sequence[Any] = (),
         thinking_budget: int | None = None,
     ) -> None:
         self._client = genai.Client(api_key=api_key)
         self._model = model
-        self._system_types = tuple(system_types)
+        self._systems = list(systems)
         self._thinking_budget = thinking_budget
+        self._include_rules: list[str] = []
+        self._exclude_rules: list[str] = []
+        self._ambiguous_policy = "include"
+
+    def set_systems(self, systems: Sequence[Any]) -> None:
+        """스캔 시작 때 등록표를 다시 읽어 넣습니다.
+        운영 중에 시스템을 추가해도 에이전트를 재시작할 필요가 없습니다."""
+        self._systems = list(systems)
+
+    def set_intake_rules(
+        self,
+        include_rules: Sequence[str],
+        exclude_rules: Sequence[str],
+        ambiguous_policy: str = "include",
+    ) -> None:
+        """접수 판정 기준을 설정에서 읽어 넣습니다 (스캔마다 갱신)."""
+        self._include_rules = list(include_rules)
+        self._exclude_rules = list(exclude_rules)
+        self._ambiguous_policy = ambiguous_policy or "include"
 
     def _config(self) -> types.GenerateContentConfig:
         kwargs: dict[str, Any] = {
-            "system_instruction": build_system_prompt(self._system_types),
+            "system_instruction": build_system_prompt(
+                self._systems,
+                self._include_rules,
+                self._exclude_rules,
+                self._ambiguous_policy,
+            ),
             "response_mime_type": "application/json",
-            "response_json_schema": build_response_schema(self._system_types),
+            "response_json_schema": build_response_schema(self._systems),
             "max_output_tokens": MAX_OUTPUT_TOKENS,
             # 분류는 매번 같은 답이 나와야 합니다. 창의성이 필요한 작업이 아닙니다.
             "temperature": 0.0,
@@ -314,7 +422,7 @@ class Classifier:
         if not isinstance(payload, dict):
             return _fallback(mail, "응답 JSON 의 최상위가 객체가 아닙니다.", self._model)
 
-        return parse_response(payload, mail, self._model, self._system_types)
+        return parse_response(payload, mail, self._model, self._systems)
 
     def available_models(self, limit: int = 20) -> list[str]:
         """doctor 가 쓰는 점검용. 키가 실제로 어떤 모델을 쓸 수 있는지 보여줍니다."""

@@ -103,7 +103,17 @@ class Sender:
             meta = meta[0] if meta else {}
 
         comments = self._store.list_comments(email.ticket_id)
+
+        # 시스템 표시명은 등록표에서 찾습니다. 지워진 코드면 코드값 그대로 씁니다.
+        system_label = None
+        code = meta.get("system_type")
+        if code:
+            for entry in self._store.list_systems():
+                if entry.get("code") == code:
+                    system_label = entry.get("name") or code
+                    break
+
         return (
             subject or build_reply_subject(ticket.get("subject") or ""),
-            body or build_reply_body(ticket, meta, comments),
+            body or build_reply_body(ticket, meta, comments, system_label=system_label),
         )

@@ -41,13 +41,20 @@ class Classification:
     `is_request` 가 False 면 티켓으로 만들지 않습니다.
     `error` 가 채워져 있으면 판별에 실패한 것이고, 그래도 티켓은 만들어집니다
     (기획서 3.1 예외 처리 — "내용이 부실해도 반려하지 않는다").
+
+    `work_type` 은 LLM 이 장애/유지보수 둘 중에서만 고릅니다.
+    신규개발 승격은 공수 판단이 필요해 관리자가 화면에서 합니다.
+
+    `system_type` 이 None 이면 미분류입니다. 등록된 시스템이 없거나
+    LLM 이 고르지 못한 경우인데, 없는 값을 지어내지 않습니다.
     """
 
     is_request: bool
     title: str
     category: str
     severity: str
-    system_type: str
+    work_type: str = "maintenance"
+    system_type: str | None = None
     due_date: date | None = None
     confidence: float | None = None
     reason: str | None = None

@@ -58,7 +58,7 @@ class TestParseResponse:
         )
         assert result.category == "error"
         assert result.severity == "medium"
-        assert result.system_type == "etc"
+        assert result.system_type is None  # 없는 분류를 지어내지 않습니다
 
     def test_empty_title_falls_back_to_subject(self):
         result = parse_response(
@@ -122,9 +122,10 @@ class TestFallback:
         assert result.is_request is True
         assert result.failed is True
         assert result.error == "API 오류: timeout"
+        assert result.work_type == "maintenance"
         assert result.category == "error"
         assert result.severity == "medium"
-        assert result.system_type == "etc"
+        assert result.system_type is None
 
     def test_fallback_title_uses_subject(self):
         assert _fallback(make_mail(subject="원래 제목"), "err").title == "원래 제목"
@@ -177,11 +178,31 @@ class TestSchemaAndPrompt:
         schema = build_response_schema(["crm", "mes"])
         assert schema["properties"]["system_type"]["enum"] == ["crm", "mes"]
 
-    def test_empty_system_types_still_valid(self):
-        """사용자가 아직 아무 시스템도 등록하지 않은 상태."""
+    def test_work_type_enum_excludes_development(self):
+        """공수 판단은 코드가 못 합니다. 신규개발 승격은 관리자 몫입니다."""
         from ticket_agent.classifier import build_response_schema
 
-        assert build_response_schema([])["properties"]["system_type"]["enum"] == ["etc"]
+        assert build_response_schema()["properties"]["work_type"]["enum"] == [
+            "incident",
+            "maintenance",
+        ]
+
+    def test_registry_dicts_render_with_description(self):
+        from ticket_agent.classifier import build_system_prompt
+
+        prompt = build_system_prompt(
+            [{"code": "erp", "name": "ERP", "description": "회계·인사 기간계"}]
+        )
+        assert "erp : ERP — 회계·인사 기간계" in prompt
+
+    def test_empty_system_types_omits_the_field(self):
+        """등록된 시스템이 없으면 항목 자체를 빼야 합니다.
+        빈 enum 은 스키마 위반이고, 기본값을 넣으면 없는 분류가 생깁니다."""
+        from ticket_agent.classifier import build_response_schema
+
+        schema = build_response_schema([])
+        assert "system_type" not in schema["properties"]
+        assert "system_type" not in schema["required"]
 
     def test_prompt_lists_system_types(self):
         from ticket_agent.classifier import build_system_prompt
@@ -204,13 +225,13 @@ class TestParseWithCustomSystemTypes:
         )
         assert result.system_type == "mes"
 
-    def test_unregistered_type_falls_back(self):
+    def test_unregistered_type_becomes_unclassified(self):
         result = parse_response(
             {"is_request": True, "title": "t", "category": "error", "severity": "low",
              "system_type": "sap", "due_date": "", "confidence": 0.5, "reason": "r"},
             make_mail(), "m", ["crm", "mes"],
         )
-        assert result.system_type == "etc"
+        assert result.system_type is None
 
     def test_empty_due_date_string_becomes_none(self):
         """Gemini 는 null 대신 빈 문자열을 돌려줍니다."""
@@ -228,3 +249,47 @@ class TestParseWithCustomSystemTypes:
             make_mail(), "m",
         )
         assert result.reason is None
+
+
+class TestIntakeCriteria:
+    """판정 기준이 설정에서 오는지 — 코드에 박혀 있으면 운영자가 못 고칩니다."""
+
+    def test_configured_rules_replace_defaults(self):
+        from ticket_agent.classifier import build_intake_criteria
+
+        text = build_intake_criteria(["결제 오류만"], ["나머지 전부"])
+        assert "결제 오류만" in text
+        assert "나머지 전부" in text
+        assert "회식" not in text  # 기본 기준이 섞이지 않습니다
+
+    def test_empty_rules_fall_back_to_defaults(self):
+        """DB 를 못 읽었다고 근거 없이 판정하게 두지 않습니다."""
+        from ticket_agent.classifier import build_intake_criteria, DEFAULT_INCLUDE_RULES
+
+        text = build_intake_criteria([], [])
+        assert DEFAULT_INCLUDE_RULES[0] in text
+
+    def test_blank_entries_are_ignored(self):
+        from ticket_agent.classifier import build_intake_criteria
+
+        text = build_intake_criteria(["  ", ""], ["실제 기준"])
+        assert "실제 기준" in text
+
+    def test_ambiguous_policy_include_is_default(self):
+        from ticket_agent.classifier import build_intake_criteria
+
+        assert "애매하면 true" in build_intake_criteria([], [])
+
+    def test_ambiguous_policy_exclude(self):
+        from ticket_agent.classifier import build_intake_criteria
+
+        text = build_intake_criteria([], [], ambiguous_policy="exclude")
+        assert "애매하면 false" in text
+        assert "애매하면 true" not in text
+
+    def test_prompt_embeds_criteria(self):
+        from ticket_agent.classifier import build_system_prompt
+
+        prompt = build_system_prompt(include_rules=["고유한기준문구"], exclude_rules=["제외문구"])
+        assert "고유한기준문구" in prompt
+        assert "제외문구" in prompt

@@ -31,6 +31,16 @@ class Collector:
 
     def run_once(self) -> ScanResult:
         """폴더를 한 번 훑습니다. 스케줄러가 반복 호출합니다."""
+        # 시스템 등록표와 접수 판정 기준을 매 스캔마다 다시 읽습니다.
+        # 운영 중에 설정을 바꿔도 에이전트 재시작이 필요 없습니다.
+        self._classifier.set_systems(self._store.list_systems())
+        include_rules, exclude_rules = self._store.intake_rules()
+        self._classifier.set_intake_rules(
+            include_rules,
+            exclude_rules,
+            self._store.setting("intake_ambiguous_policy", "include"),
+        )
+
         mails = list(
             self._mail.fetch(
                 folder=self._config.outlook_folder,
@@ -82,10 +92,13 @@ class Collector:
 
         if not classification.is_request:
             log.info(
-                "요구사항 메일이 아니라 건너뜁니다: %r (%s)",
+                "요구사항 메일이 아니라 티켓을 만들지 않습니다: %r (%s)",
                 mail.subject,
                 classification.reason or "사유 없음",
             )
+            # 티켓은 안 만들지만 **기록은 남깁니다.** 이게 없으면 LLM 오판을
+            # 아무도 알 수 없습니다. 검토 화면에서 사람이 구제할 수 있습니다.
+            self._store.record_scanned_mail(mail, classification, None)
             self._mark_done(mail)
             return "not_request"
 
@@ -96,16 +109,19 @@ class Collector:
         except Exception as exc:
             raise StoreError(f"티켓 적재 실패: {exc}") from exc
 
+        self._store.record_scanned_mail(mail, classification, ticket_id)
+
         for attachment in mail.attachments:
             self._store.upload_attachment(ticket_id, attachment)
 
         log.info(
-            "티켓 #%s 생성: %r [%s/%s/%s]%s",
+            "티켓 #%s 생성: %r [%s/%s/%s/%s]%s",
             ticket_id,
             classification.title,
+            classification.work_type,
             classification.category,
             classification.severity,
-            classification.system_type,
+            classification.system_type or "미분류",
             " ⚠️ 분류 실패" if classification.failed else "",
         )
 

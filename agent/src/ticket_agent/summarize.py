@@ -10,7 +10,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Iterable
 
-from .constants import CATEGORY_LABELS, SEVERITY_LABELS, STATUS_LABELS, SYSTEM_TYPE_LABELS
+from .constants import (
+    CATEGORY_LABELS,
+    SEVERITY_LABELS,
+    STATUS_LABELS,
+    WORK_TYPE_LABELS,
+)
 
 
 def _fmt_date(value: Any) -> str:
@@ -52,11 +57,15 @@ def build_reply_body(
     meta: dict[str, Any] | None = None,
     comments: Iterable[dict[str, Any]] = (),
     signature: str = "IT 운영팀 드림",
+    system_label: str | None = None,
 ) -> str:
     """처리 결과 회신 본문.
 
     구성: 인사 → 요청 요약 → 처리 내역(코멘트) → 맺음말.
     코멘트가 하나도 없으면 그 절은 통째로 빠집니다 — 빈 제목만 남기지 않습니다.
+
+    시스템 종류는 등록표(public.systems)를 따르므로 표시명을 인자로 받습니다.
+    주지 않으면 코드값을 그대로 쓰고, 그것도 없으면 '미분류' 입니다.
     """
     meta = meta or {}
     reporter = (ticket.get("reporter_name") or "").strip()
@@ -70,9 +79,10 @@ def build_reply_body(
         "■ 요청 내용",
         f"  · 제목      : {ticket.get('subject') or '-'}",
         f"  · 접수일    : {_fmt_date(ticket.get('received_at'))}",
-        f"  · 유형      : {CATEGORY_LABELS.get(meta.get('category'), '-')}"
+        f"  · 유형      : {WORK_TYPE_LABELS.get(meta.get('work_type'), '-')}"
+        f" / {CATEGORY_LABELS.get(meta.get('category'), '-')}"
         f" / {SEVERITY_LABELS.get(meta.get('severity'), '-')}",
-        f"  · 대상 시스템: {SYSTEM_TYPE_LABELS.get(meta.get('system_type'), '-')}",
+        f"  · 대상 시스템: {system_label or meta.get('system_type') or '미분류'}",
         f"  · 처리 상태  : {STATUS_LABELS.get(meta.get('status'), '-')}",
         f"  · 완료일    : {_fmt_date(meta.get('completed_at'))}"
         f" (소요 {lead_time_text(ticket.get('received_at'), meta.get('completed_at'))})",
