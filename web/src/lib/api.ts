@@ -516,7 +516,7 @@ export async function convertScanToTicket(
     category: overrides.category ?? scan.llm_category ?? 'error',
     severity: overrides.severity ?? scan.llm_severity ?? 'medium',
     system_type: overrides.systemType ?? scan.llm_system ?? null,
-    // 사람이 구제한 건이므로 바로 분석/할당으로 보냅니다.
+    // 사람이 구제한 건이므로 바로 Triage 로 보냅니다.
     status: 'triage',
   })
   if (metaError) {

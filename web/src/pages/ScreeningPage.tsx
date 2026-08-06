@@ -329,7 +329,7 @@ function ConvertPanel({
       </div>
 
       <p className="text-[11px] text-slate-400">
-        전환하면 &apos;분석/할당&apos; 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시
+        전환하면 <strong>Triage</strong> 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시
         티켓이 되지는 않습니다 (메일 ID {scan.message_id} 기준).
       </p>
     </div>

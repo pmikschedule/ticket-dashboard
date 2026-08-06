@@ -128,7 +128,7 @@ class TicketStore:
 
         `source_message_id` 는 비웁니다 — 아웃룩 메일이 아니므로 중복 판정 대상이
         아니고, Postgres 는 unique 컬럼의 NULL 을 여러 개 허용합니다.
-        사람이 직접 넣은 건이라 바로 '분석/할당' 으로 보냅니다.
+        사람이 직접 넣은 건이라 바로 Triage 로 보냅니다.
         """
         payload: dict[str, Any] = {
             "subject": classification.title or entry.subject or "(제목 없음)",

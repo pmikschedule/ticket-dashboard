@@ -259,7 +259,7 @@ def _clean_due_date(value: Any) -> date | None:
 
 
 def _fallback(mail: RawMail, error: str, model: str | None = None) -> Classification:
-    """분류에 실패했을 때. 티켓은 만들되 '분석/할당' 으로 보냅니다."""
+    """분류에 실패했을 때. 티켓은 만들되 Triage 로 보냅니다."""
     title = mail.subject.strip() or first_line(mail.body) or "(제목 없음)"
     return Classification(
         is_request=True,  # 판별을 못 했으므로 사람이 보게 둡니다
