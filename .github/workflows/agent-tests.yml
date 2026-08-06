@@ -1,0 +1,29 @@
+name: Agent tests
+
+on:
+  push:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/agent-tests.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+  workflow_dispatch:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # pywin32 는 Windows 전용 마커가 걸려 있어 리눅스에서는 설치되지 않습니다.
+      # 테스트는 전부 fixture 백엔드와 순수 함수만 쓰므로 문제없습니다.
+      - run: pip install -e ".[dev]"
+      - run: pytest -q

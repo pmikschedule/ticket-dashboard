@@ -1,0 +1,75 @@
+import { NavLink, Outlet } from 'react-router-dom'
+
+import { useAuth } from '../hooks/useAuth'
+import { ROLE_LABELS } from '../lib/constants'
+
+const NAV = [
+  { to: '/', label: '보드', end: true },
+  { to: '/list', label: '목록', end: false },
+  { to: '/stats', label: '통계', end: false },
+]
+
+export default function Layout() {
+  const { user, isAdmin, signOut } = useAuth()
+
+  return (
+    <div className="min-h-screen">
+      <header className="border-b border-slate-200 bg-white">
+        <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
+          <span className="text-sm font-semibold text-slate-900">이슈 트래킹</span>
+
+          <nav className="flex items-center gap-1">
+            {NAV.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.end}
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-1.5 text-sm transition ${
+                    isActive
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`
+                }
+              >
+                {item.label}
+              </NavLink>
+            ))}
+            {isAdmin && (
+              <NavLink
+                to="/admin"
+                className={({ isActive }) =>
+                  `rounded-md px-3 py-1.5 text-sm transition ${
+                    isActive
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+                  }`
+                }
+              >
+                사용자
+              </NavLink>
+            )}
+          </nav>
+
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            <span className="text-slate-600">
+              {user?.name || user?.email}
+              {user && (
+                <span className="ml-1.5 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-600">
+                  {ROLE_LABELS[user.role]}
+                </span>
+              )}
+            </span>
+            <button type="button" className="btn-secondary" onClick={() => void signOut()}>
+              로그아웃
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-7xl px-4 py-6">
+        <Outlet />
+      </main>
+    </div>
+  )
+}

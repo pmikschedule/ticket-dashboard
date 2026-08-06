@@ -1,0 +1,46 @@
+[
+  {
+    "message_id": "fixture-001",
+    "subject": "[긴급] ERP 전표 승인 화면에서 저장이 안 됩니다",
+    "sender_email": "kim.younghee@example.co.kr",
+    "sender_name": "김영희",
+    "received_at": "2026-08-05T09:12:00+09:00",
+    "folder": "받은 편지함/요청",
+    "body": "안녕하세요, 회계팀 김영희입니다.\n\n오늘 오전 8시 40분경부터 ERP 전표 승인 화면에서 저장 버튼을 누르면\n'처리 중 오류가 발생했습니다' 라는 메시지만 뜨고 저장이 되지 않습니다.\n회계팀 6명 전원 동일 증상이며, 월 마감이 오늘까지라 급합니다.\n\n스크린샷 첨부합니다. 확인 부탁드립니다.\n\n감사합니다.\n김영희 드림\n회계팀 / 내선 3312",
+    "attachments": [
+      {
+        "file_name": "erp_error.txt",
+        "content": "ERP-3021 승인 처리 중 예외 발생",
+        "content_type": "text/plain"
+      }
+    ]
+  },
+  {
+    "message_id": "fixture-002",
+    "subject": "RE: 8월 팀 회식 장소 투표",
+    "sender_email": "park.minsu@example.co.kr",
+    "sender_name": "박민수",
+    "received_at": "2026-08-05T10:30:00+09:00",
+    "folder": "받은 편지함/요청",
+    "body": "저는 2번 좋습니다! 금요일 저녁이면 다 가능하실 것 같은데요.\n\n-----Original Message-----\nFrom: 총무팀\nSubject: 8월 팀 회식 장소 투표\n\n아래 중 선호하는 곳에 투표 부탁드립니다."
+  },
+  {
+    "message_id": "fixture-003",
+    "subject": "물류 연동 API 응답 지연 건 개선 요청",
+    "sender_email": "lee.jihoon@example.co.kr",
+    "sender_name": "이지훈",
+    "received_at": "2026-08-05T14:05:00+09:00",
+    "folder": "받은 편지함/요청",
+    "body": "물류팀 이지훈입니다.\n\n출고 조회 API 응답이 평소 1초 내외였는데 최근 5~8초까지 늘어났습니다.\n업무는 진행 가능하지만 하루 200건 조회 시 체감 지연이 큽니다.\n8월 20일까지 개선 가능한지 검토 부탁드립니다.",
+    "attachments": []
+  },
+  {
+    "message_id": "fixture-004",
+    "subject": "신규 입사자 그룹웨어 계정 생성 요청 (3명)",
+    "sender_email": "hr@example.co.kr",
+    "sender_name": "인사팀",
+    "received_at": "2026-08-06T08:20:00+09:00",
+    "folder": "받은 편지함/요청",
+    "body": "8월 10일자 입사 예정 3명의 그룹웨어 및 VPN 계정 생성 요청드립니다.\n\n- 정수연 / 마케팅팀\n- 최도현 / 개발팀\n- 한소미 / 영업팀\n\n입사일 전날까지 준비 부탁드립니다."
+  }
+]
