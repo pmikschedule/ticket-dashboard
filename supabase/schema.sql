@@ -262,10 +262,19 @@ drop trigger if exists trg_meta_status_update on public.ticket_meta;
 create trigger trg_meta_status_update before update on public.ticket_meta
   for each row execute function public.log_status_change();
 
--- 9.3 관리자가 아니면 role 을 바꿀 수 없습니다
+-- 9.3 관리자가 아니면 role 을 바꿀 수 없습니다.
+--
+-- 단, auth.uid() 가 null 인 경로(SQL Editor, service_role 키, 마이그레이션)는
+-- 통과시킵니다. 그쪽은 이미 DB 전체 권한을 가지고 있어 이 트리거로 막을 것이 없고,
+-- 막으면 **최초 관리자를 만들 방법이 사라집니다** — 관리자가 되려면 관리자가
+-- 필요해지는 교착이 생깁니다. 이 트리거가 실제로 막아야 하는 것은
+-- 로그인한 팀원이 API 로 자기 역할을 올리는 경우입니다.
 create or replace function public.guard_role_change()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  if auth.uid() is null then
+    return new;
+  end if;
   if new.role is distinct from old.role and not public.is_admin() then
     raise exception '역할 변경은 관리자만 가능합니다';
   end if;
