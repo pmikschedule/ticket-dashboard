@@ -2,6 +2,7 @@
 
     ticket-agent collect            메일을 한 번 스캔해 티켓으로 적재
     ticket-agent collect --watch    N초마다 반복 스캔
+    ticket-agent manual             수동 등록 큐를 한 번 처리
     ticket-agent send               발송 큐를 한 번 처리
     ticket-agent send --watch       발송 큐를 계속 감시 (상시 실행용)
     ticket-agent run                수집과 발송을 한 프로세스에서 번갈아 실행
@@ -19,6 +20,7 @@ from .classifier import Classifier
 from .collector import Collector
 from .config import Config, ConfigError, load_config
 from .mail import build_mail_client
+from .manual import ManualProcessor
 from .sender import Sender
 from .store import TicketStore
 
@@ -73,6 +75,26 @@ def cmd_collect(config: Config, args: argparse.Namespace) -> int:
         mail.close()
 
 
+def cmd_manual(config: Config, args: argparse.Namespace) -> int:
+    """수동 등록 큐 — 웹에서 붙여넣은 본문을 분류해 티켓으로."""
+    mail, store, classifier = _build(config)
+    classifier.set_systems(store.list_systems())
+    include_rules, exclude_rules = store.intake_rules()
+    classifier.set_intake_rules(
+        include_rules, exclude_rules, store.setting("intake_ambiguous_policy", "include")
+    )
+
+    processor = ManualProcessor(classifier, store)
+    try:
+        result = processor.run_once(limit=args.limit)
+        print(result.summary())
+        for error in result.errors:
+            print(f"  ⚠️ {error}", file=sys.stderr)
+        return 1 if result.errors else 0
+    finally:
+        mail.close()
+
+
 def cmd_send(config: Config, args: argparse.Namespace) -> int:
     mail, store, _ = _build(config)
     sender = Sender(config, mail, store)
@@ -97,13 +119,15 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
     mail, store, classifier = _build(config)
     collector = Collector(config, mail, classifier, store)
     sender = Sender(config, mail, store)
+    manual = ManualProcessor(classifier, store)
 
     collect_interval = max(60, args.interval)
     send_interval = max(5, config.send_poll_interval)
     next_collect = 0.0
 
     log.info(
-        "상시 실행 시작 — 수집 %d초 주기, 발송 %d초 주기 (발송 모드: %s). Ctrl+C 로 종료합니다.",
+        "상시 실행 시작 — 수집 %d초 주기, 수동등록·발송 %d초 주기 "
+        "(발송 모드: %s). Ctrl+C 로 종료합니다.",
         collect_interval,
         send_interval,
         config.send_mode,
@@ -119,6 +143,14 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
                         log.info(result.summary())
                 except Exception as exc:
                     log.exception("수집 오류 — 계속 진행합니다: %s", exc)
+
+            # 수동 등록은 사람이 화면에서 기다리므로 발송보다 먼저 봅니다.
+            try:
+                manual_result = manual.run_once(limit=args.limit)
+                if manual_result.picked:
+                    log.info(manual_result.summary())
+            except Exception as exc:
+                log.exception("수동 등록 오류 — 계속 진행합니다: %s", exc)
 
             try:
                 send_result = sender.run_once(limit=args.limit)
@@ -204,7 +236,11 @@ def build_parser() -> argparse.ArgumentParser:
     send.add_argument("--limit", type=int, default=10, help="한 번에 처리할 건수")
     send.set_defaults(func=cmd_send)
 
-    run = sub.add_parser("run", help="수집 + 발송 상시 실행")
+    manual = sub.add_parser("manual", help="수동 등록 큐를 처리")
+    manual.add_argument("--limit", type=int, default=10, help="한 번에 처리할 건수")
+    manual.set_defaults(func=cmd_manual)
+
+    run = sub.add_parser("run", help="수집 + 수동 등록 + 발송 상시 실행")
     run.add_argument("--interval", type=int, default=300, help="수집 주기(초). 최소 60")
     run.add_argument("--limit", type=int, default=10, help="한 번에 처리할 발송 건수")
     run.set_defaults(func=cmd_run)

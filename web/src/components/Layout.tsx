@@ -60,6 +60,19 @@ export default function Layout() {
           </nav>
 
           <div className="ml-auto flex items-center gap-3 text-sm">
+            {/* 구두·전화로 받은 요청은 어디서든 바로 넣을 수 있어야 합니다 */}
+            <NavLink
+              to="/new"
+              className={({ isActive }) =>
+                `rounded-md px-3 py-1.5 text-sm font-medium transition ${
+                  isActive
+                    ? 'bg-slate-900 text-white'
+                    : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                }`
+              }
+            >
+              + 요청 등록
+            </NavLink>
             <span className="text-slate-600">
               {user?.name || user?.email}
               {user && (

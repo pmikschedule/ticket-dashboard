@@ -17,6 +17,7 @@ export const keys = {
   intakeRules: ['intake-rules'] as const,
   settings: ['settings'] as const,
   scans: (filters: api.ScanFilters) => ['scans', filters] as const,
+  manualIntakes: ['manual-intakes'] as const,
 }
 
 export function useTickets(filters: TicketFilters) {
@@ -199,6 +200,28 @@ export function useConvertScanToTicket() {
       void queryClient.invalidateQueries({ queryKey: ['scans'] })
       void queryClient.invalidateQueries({ queryKey: ['tickets'] })
       void queryClient.invalidateQueries({ queryKey: keys.leadTimes })
+    },
+  })
+}
+
+// ── 수동 등록 ────────────────────────────────────────────────────────────────
+
+export function useManualIntakes() {
+  return useQuery({
+    queryKey: keys.manualIntakes,
+    queryFn: () => api.fetchManualIntakes(),
+    // 에이전트가 처리하는 데 시간이 걸리므로 주기적으로 다시 봅니다.
+    refetchInterval: 10_000,
+  })
+}
+
+export function useQueueManualIntake() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.queueManualIntake,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: keys.manualIntakes })
+      void queryClient.invalidateQueries({ queryKey: ['tickets'] })
     },
   })
 }

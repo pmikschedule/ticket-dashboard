@@ -73,3 +73,6 @@ cd agent && ticket-agent doctor         # 설정·연결 점검
 - **접수일** = `tickets.received_at` (메일 수신일시). `created_at`(에이전트 적재 시각)이 아닙니다.
 - **리드타임** = 접수 → 완료 경과 시간. `ticket_lead_times` 뷰가 계산합니다.
 - **발송 큐** = `outbound_emails`. 웹이 넣고 에이전트가 집어갑니다.
+- **수동 등록 큐** = `manual_intake`. 같은 구조. **`is_request` 판정을 하지 않습니다** —
+  사람이 등록한 이상 요청 여부는 이미 결정됐고 LLM 은 분류만 합니다.
+- **MTTA/MTTR** = 접수→착수(대기) / 착수→완료(수리). 둘 다 **장애만** 모수로 삼습니다.

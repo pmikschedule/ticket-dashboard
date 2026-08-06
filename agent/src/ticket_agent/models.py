@@ -80,6 +80,47 @@ class OutboundEmail:
 
 
 @dataclass(frozen=True)
+class ManualIntake:
+    """수동 등록 큐에서 꺼낸 한 건.
+
+    사람이 직접 넣은 것이므로 **요청 여부는 이미 결정돼 있습니다.**
+    LLM 은 분류만 합니다.
+    """
+
+    id: int
+    raw_text: str
+    subject: str | None = None
+    reporter_email: str | None = None
+    reporter_name: str | None = None
+    received_at: datetime | None = None
+    channel: str = "verbal"
+    attempts: int = 0
+
+    def as_mail(self) -> "RawMail":
+        """분류기가 받는 형태로 감쌉니다. 메일과 같은 경로를 타게 하려는 것입니다."""
+        return RawMail(
+            message_id=f"manual-{self.id}",
+            subject=(self.subject or "").strip(),
+            body=self.raw_text or "",
+            sender_email=(self.reporter_email or "").strip(),
+            sender_name=self.reporter_name,
+            received_at=self.received_at,
+            folder=None,
+        )
+
+
+@dataclass(frozen=True)
+class ManualResult:
+    picked: int = 0
+    created: int = 0
+    failed: int = 0
+    errors: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return f"수동 등록 {self.picked}건 · 티켓 생성 {self.created}건 · 실패 {self.failed}건"
+
+
+@dataclass(frozen=True)
 class ScanResult:
     scanned: int = 0
     created: int = 0

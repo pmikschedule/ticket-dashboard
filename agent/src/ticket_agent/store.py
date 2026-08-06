@@ -14,7 +14,7 @@ from typing import Any
 from supabase import Client, create_client
 
 from .constants import FALLBACK_STATUS
-from .models import Attachment, Classification, OutboundEmail, RawMail
+from .models import Attachment, Classification, ManualIntake, OutboundEmail, RawMail
 from .textutil import sanitize_filename
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,127 @@ class TicketStore:
         rows = response.data or []
         return rows[0]["id"] if rows else None
 
+    def _create_ticket_row(
+        self,
+        ticket_payload: dict[str, Any],
+        classification: Classification,
+        status: str | None = None,
+    ) -> int:
+        """tickets + ticket_meta 를 함께 만드는 공통 경로.
+
+        meta insert 가 실패하면 ticket 을 지웁니다 — 상태 없는 티켓이 목록에
+        떠 버리면 담당자가 손댈 수 없기 때문입니다.
+        """
+        response = self._client.table("tickets").insert(ticket_payload).execute()
+        rows = response.data or []
+        if not rows:
+            raise StoreError("티켓 insert 가 행을 돌려주지 않았습니다.")
+        ticket_id = int(rows[0]["id"])
+
+        meta_payload = {
+            "ticket_id": ticket_id,
+            "work_type": classification.work_type,
+            "category": classification.category,
+            "severity": classification.severity,
+            "system_type": classification.system_type,
+            "status": status
+            or (FALLBACK_STATUS if classification.failed else "intake"),
+            "llm_model": classification.model,
+            "llm_confidence": classification.confidence,
+            "llm_reason": classification.reason,
+            "llm_error": classification.error,
+        }
+        try:
+            self._client.table("ticket_meta").insert(meta_payload).execute()
+        except Exception as exc:
+            self._client.table("tickets").delete().eq("id", ticket_id).execute()
+            raise StoreError(
+                f"ticket_meta insert 에 실패해 티켓 {ticket_id} 을 되돌렸습니다: {exc}"
+            ) from exc
+
+        return ticket_id
+
+    # ── 수동 등록 큐 ────────────────────────────────────────────────────────
+    def claim_manual_intake(self, limit: int = 10) -> list[ManualIntake]:
+        """대기 중인 수동 등록을 오래된 순으로 가져옵니다."""
+        response = (
+            self._client.table("manual_intake")
+            .select(
+                "id, raw_text, subject, reporter_email, reporter_name, "
+                "received_at, channel, attempts"
+            )
+            .eq("status", "queued")
+            .order("requested_at")
+            .limit(limit)
+            .execute()
+        )
+        results = []
+        for row in response.data or []:
+            received = row.get("received_at")
+            results.append(
+                ManualIntake(
+                    id=int(row["id"]),
+                    raw_text=row.get("raw_text") or "",
+                    subject=row.get("subject"),
+                    reporter_email=row.get("reporter_email"),
+                    reporter_name=row.get("reporter_name"),
+                    received_at=(
+                        datetime.fromisoformat(str(received).replace("Z", "+00:00"))
+                        if received
+                        else None
+                    ),
+                    channel=row.get("channel") or "verbal",
+                    attempts=int(row.get("attempts") or 0),
+                )
+            )
+        return results
+
+    def create_ticket_from_manual(
+        self, entry: ManualIntake, classification: Classification
+    ) -> int:
+        """수동 등록을 티켓으로.
+
+        `source_message_id` 는 비웁니다 — 아웃룩 메일이 아니므로 중복 판정 대상이
+        아니고, Postgres 는 unique 컬럼의 NULL 을 여러 개 허용합니다.
+        사람이 직접 넣은 건이라 바로 '분석/할당' 으로 보냅니다.
+        """
+        payload: dict[str, Any] = {
+            "subject": classification.title or entry.subject or "(제목 없음)",
+            "description": entry.raw_text or "",
+            "reporter_email": (entry.reporter_email or "").strip() or "unknown@unknown",
+            "reporter_name": entry.reporter_name,
+            "received_at": _iso(entry.received_at),
+            "due_date": classification.due_date.isoformat() if classification.due_date else None,
+            "intake_channel": entry.channel,
+        }
+        return self._create_ticket_row(payload, classification, status=FALLBACK_STATUS)
+
+    def mark_manual_done(self, entry_id: int, ticket_id: int, attempts: int) -> None:
+        self._client.table("manual_intake").update(
+            {
+                "status": "done",
+                "ticket_id": ticket_id,
+                "attempts": attempts + 1,
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+                "error": None,
+            }
+        ).eq("id", entry_id).execute()
+
+    def mark_manual_failed(self, entry_id: int, error: str, attempts: int) -> None:
+        """3회까지는 큐에 남겨 재시도하고, 그 뒤에는 failed 로 확정합니다.
+
+        조용히 사라지면 등록한 사람은 티켓이 생긴 줄 압니다.
+        """
+        next_attempts = attempts + 1
+        self._client.table("manual_intake").update(
+            {
+                "status": "queued" if next_attempts < 3 else "failed",
+                "attempts": next_attempts,
+                "error": error[:2000],
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ).eq("id", entry_id).execute()
+
     def create_ticket(self, mail: RawMail, classification: Classification) -> int:
         """tickets + ticket_meta 를 함께 만듭니다.
 
@@ -64,34 +185,7 @@ class TicketStore:
             "source_folder": mail.folder,
         }
 
-        response = self._client.table("tickets").insert(ticket_payload).execute()
-        rows = response.data or []
-        if not rows:
-            raise StoreError(f"티켓 insert 가 행을 돌려주지 않았습니다: {mail.message_id}")
-        ticket_id = int(rows[0]["id"])
-
-        meta_payload = {
-            "ticket_id": ticket_id,
-            "work_type": classification.work_type,
-            "category": classification.category,
-            "severity": classification.severity,
-            "system_type": classification.system_type,
-            # 분류에 실패했으면 사람이 먼저 보도록 '분석/할당' 으로 넣습니다.
-            "status": FALLBACK_STATUS if classification.failed else "intake",
-            "llm_model": classification.model,
-            "llm_confidence": classification.confidence,
-            "llm_reason": classification.reason,
-            "llm_error": classification.error,
-        }
-        try:
-            self._client.table("ticket_meta").insert(meta_payload).execute()
-        except Exception as exc:
-            self._client.table("tickets").delete().eq("id", ticket_id).execute()
-            raise StoreError(
-                f"ticket_meta insert 에 실패해 티켓 {ticket_id} 을 되돌렸습니다: {exc}"
-            ) from exc
-
-        return ticket_id
+        return self._create_ticket_row(ticket_payload, classification)
 
     # ── 시스템 등록표 ───────────────────────────────────────────────────────
     def list_systems(self) -> list[dict[str, Any]]:

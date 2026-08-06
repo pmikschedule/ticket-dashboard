@@ -897,3 +897,67 @@ create policy settings_write_admin on public.app_settings
   for insert with check (public.is_admin());
 create policy settings_update_admin on public.app_settings
   for update using (public.is_admin()) with check (public.is_admin());
+
+-- ----------------------------------------------------------------------------
+-- 15.10 수동 등록 큐 — 본문을 붙여넣으면 시스템이 성격을 판단해 티켓으로
+--
+-- 메일로 오지 않은 요청(구두·전화·메신저)을 등록하는 경로입니다.
+-- 웹은 **큐에 넣기만** 하고, 분류는 에이전트가 합니다.
+-- LLM API 키가 에이전트 PC 한 곳에만 있어야 하기 때문입니다 —
+-- 브라우저에 넣으면 그대로 노출됩니다. 회신 발송 큐와 같은 구조입니다.
+--
+-- ⚠️ 여기 들어온 건은 **is_request 판정을 하지 않습니다.**
+--    사람이 직접 등록한 이상 요청이라는 판단은 이미 끝난 것이고,
+--    LLM 은 분류(대분류·등급·시스템·기한)만 합니다.
+-- ----------------------------------------------------------------------------
+create table if not exists public.manual_intake (
+  id             bigserial primary key,
+  raw_text       text not null,              -- 붙여넣은 본문 (구두 요청이면 받아적은 내용)
+  subject        text,                       -- 비우면 LLM 이 제목을 만듭니다
+  reporter_email text,                       -- 구두 요청이면 비어 있을 수 있습니다
+  reporter_name  text,
+  received_at    timestamptz not null default now(),  -- 요청받은 시점
+  channel        text not null default 'verbal'
+                   check (channel in ('verbal', 'phone', 'messenger', 'mail', 'etc')),
+  note           text,                       -- 등록자 메모 (티켓 본문에 들어가지 않습니다)
+
+  status       text not null default 'queued'
+                 check (status in ('queued', 'done', 'failed')),
+  ticket_id    bigint references public.tickets(id) on delete set null,
+  error        text,
+  attempts     int not null default 0,
+
+  requested_by uuid references public.users(id) on delete set null,
+  requested_at timestamptz not null default now(),
+  processed_at timestamptz
+);
+
+comment on table public.manual_intake is
+  '수동 등록 큐. 웹이 본문을 넣고 에이전트가 분류해 티켓으로 만듭니다';
+comment on column public.manual_intake.channel is
+  '요청받은 경로. 통계에서 "구두 요청이 몇 %인지" 를 보기 위한 값입니다';
+
+create index if not exists idx_manual_queued
+  on public.manual_intake (requested_at) where (status = 'queued');
+
+alter table public.manual_intake enable row level security;
+
+drop policy if exists manual_read         on public.manual_intake;
+drop policy if exists manual_insert       on public.manual_intake;
+drop policy if exists manual_update_admin on public.manual_intake;
+drop policy if exists manual_delete_admin on public.manual_intake;
+
+create policy manual_read on public.manual_intake
+  for select using (public.is_member());
+-- 등록은 **팀원 전원**이 할 수 있습니다. 구두 요청은 누구나 받습니다.
+create policy manual_insert on public.manual_intake
+  for insert with check (public.is_member() and requested_by = auth.uid());
+create policy manual_update_admin on public.manual_intake
+  for update using (public.is_admin()) with check (public.is_admin());
+create policy manual_delete_admin on public.manual_intake
+  for delete using (public.is_admin());
+
+-- 티켓이 어느 경로로 들어왔는지. 메일이 아닌 건을 구분합니다.
+alter table public.tickets add column if not exists intake_channel text;
+comment on column public.tickets.intake_channel is
+  'null=메일 수집. 그 외에는 manual_intake.channel 값이 들어갑니다';

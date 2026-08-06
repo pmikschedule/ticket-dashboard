@@ -5,6 +5,7 @@ import { useAuth } from './hooks/useAuth'
 import AdminPage from './pages/AdminPage'
 import BoardPage from './pages/BoardPage'
 import ListPage from './pages/ListPage'
+import NewTicketPage from './pages/NewTicketPage'
 import ScreeningPage from './pages/ScreeningPage'
 import SettingsPage from './pages/SettingsPage'
 import LoginPage from './pages/LoginPage'
@@ -40,6 +41,7 @@ export default function App() {
       <Route element={<Layout />}>
         <Route index element={<BoardPage />} />
         <Route path="list" element={<ListPage />} />
+        <Route path="new" element={<NewTicketPage />} />
         <Route path="stats" element={<StatsPage />} />
         <Route path="screening" element={<ScreeningPage />} />
         <Route path="settings" element={<SettingsPage />} />

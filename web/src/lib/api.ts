@@ -14,6 +14,7 @@ import type {
   LeadTimeRow,
   OutboundEmailRow,
   IntakeRule,
+  ManualIntakeRow,
   ScannedMail,
   StatusHistoryRow,
   SystemRow,
@@ -522,4 +523,53 @@ export async function convertScanToTicket(
   if (scanError) throw new Error(scanError.message)
 
   return ticket.id
+}
+
+// ── 수동 등록 ────────────────────────────────────────────────────────────────
+
+/**
+ * 수동 등록 요청.
+ *
+ * 웹은 **큐에 넣기만** 합니다. 분류는 에이전트가 합니다 —
+ * LLM API 키가 브라우저에 있으면 안 되기 때문입니다.
+ * 등록 후 티켓이 뜨기까지 에이전트 폴링 주기(기본 30초)만큼 걸립니다.
+ */
+export async function queueManualIntake(input: {
+  rawText: string
+  subject?: string
+  reporterEmail?: string
+  reporterName?: string
+  receivedAt?: string
+  channel: string
+  note?: string
+  requestedBy: string
+}): Promise<number> {
+  const row = unwrap(
+    await supabase
+      .from('manual_intake')
+      .insert({
+        raw_text: input.rawText,
+        subject: input.subject?.trim() || null,
+        reporter_email: input.reporterEmail?.trim() || null,
+        reporter_name: input.reporterName?.trim() || null,
+        received_at: input.receivedAt || new Date().toISOString(),
+        channel: input.channel,
+        note: input.note?.trim() || null,
+        requested_by: input.requestedBy,
+      })
+      .select('id')
+      .single(),
+  ) as { id: number }
+  return row.id
+}
+
+/** 내가 넣은 요청의 처리 상태. 등록 후 결과를 확인할 수 있어야 합니다. */
+export async function fetchManualIntakes(limit = 20): Promise<ManualIntakeRow[]> {
+  return unwrap(
+    await supabase
+      .from('manual_intake')
+      .select('*')
+      .order('requested_at', { ascending: false })
+      .limit(limit),
+  ) as ManualIntakeRow[]
 }

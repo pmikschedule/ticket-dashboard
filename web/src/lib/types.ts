@@ -183,6 +183,37 @@ export interface ScannedMail {
   review_note: string | null
 }
 
+/** 수동 등록 경로 */
+export const INTAKE_CHANNELS = ['verbal', 'phone', 'messenger', 'mail', 'etc'] as const
+export type IntakeChannel = (typeof INTAKE_CHANNELS)[number]
+
+export const INTAKE_CHANNEL_LABELS: Record<IntakeChannel, string> = {
+  verbal: '구두',
+  phone: '전화',
+  messenger: '메신저',
+  mail: '메일(직접 옮김)',
+  etc: '기타',
+}
+
+/** 수동 등록 큐 한 건 */
+export interface ManualIntakeRow {
+  id: number
+  raw_text: string
+  subject: string | null
+  reporter_email: string | null
+  reporter_name: string | null
+  received_at: string
+  channel: IntakeChannel
+  note: string | null
+  status: 'queued' | 'done' | 'failed'
+  ticket_id: number | null
+  error: string | null
+  attempts: number
+  requested_by: string | null
+  requested_at: string
+  processed_at: string | null
+}
+
 export interface TicketFilters {
   status?: Status | 'all'
   workType?: WorkType | 'all'
