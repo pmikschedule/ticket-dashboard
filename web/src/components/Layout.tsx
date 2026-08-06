@@ -26,6 +26,19 @@ export default function Layout() {
         <div className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
           <span className="text-sm font-semibold text-slate-900">이슈 트래킹</span>
 
+          {/*
+            빌드 표시. GitHub Pages 는 index.html 에 max-age=600 을 걸기 때문에
+            브라우저가 옛 HTML 을 물고 있으면 배포해도 화면이 그대로입니다.
+            그때 이 값이 안 바뀌면 서버가 아니라 캐시가 문제라는 걸 바로 압니다.
+            (강제 새로고침: 맥 ⌘⇧R / 윈도우 Ctrl+F5)
+          */}
+          <span
+            className="hidden font-mono text-[10px] text-slate-400 sm:inline"
+            title={`빌드 ${__BUILD_ID__} · ${__BUILT_AT__}\n화면이 안 바뀌면 강제 새로고침 (⌘⇧R / Ctrl+F5)`}
+          >
+            {__BUILD_ID__}
+          </span>
+
           <nav className="flex items-center gap-1">
             {NAV.map((item) => (
               <NavLink

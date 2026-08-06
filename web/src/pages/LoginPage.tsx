@@ -27,7 +27,20 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <form onSubmit={handleSubmit} className="card w-full max-w-sm space-y-4 p-6">
         <div>
-          <h1 className="text-lg font-semibold text-slate-900">이슈 트래킹</h1>
+          <div className="flex items-baseline justify-between gap-2">
+            <h1 className="text-lg font-semibold text-slate-900">이슈 트래킹</h1>
+            {/*
+              로그인 전에도 보여야 합니다 — "화면이 안 바뀐다" 를 가장 먼저
+              마주치는 곳이 이 화면이기 때문입니다. 배포했는데 이 값이 그대로면
+              서버가 아니라 브라우저 캐시입니다 (강제 새로고침 ⌘⇧R / Ctrl+F5).
+            */}
+            <span
+              className="font-mono text-[10px] text-slate-400"
+              title={`빌드 ${__BUILD_ID__} · ${__BUILT_AT__}`}
+            >
+              {__BUILD_ID__}
+            </span>
+          </div>
           <p className="mt-1 text-sm text-slate-500">등록된 계정으로 로그인하세요.</p>
         </div>
 
