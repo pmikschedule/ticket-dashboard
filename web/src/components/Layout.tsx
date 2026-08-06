@@ -8,6 +8,7 @@ const NAV = [
   { to: '/list', label: '목록', end: false },
   { to: '/screening', label: '스크리닝', end: false },
   { to: '/weekly', label: '주간현황', end: false },
+  { to: '/gantt', label: '일정', end: false },
   { to: '/stats', label: '통계', end: false },
 ]
 

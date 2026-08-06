@@ -4,6 +4,7 @@ import Layout from './components/Layout'
 import { useAuth } from './hooks/useAuth'
 import AdminPage from './pages/AdminPage'
 import BoardPage from './pages/BoardPage'
+import GanttPage from './pages/GanttPage'
 import ListPage from './pages/ListPage'
 import NewTicketPage from './pages/NewTicketPage'
 import ScreeningPage from './pages/ScreeningPage'
@@ -44,6 +45,7 @@ export default function App() {
         <Route path="list" element={<ListPage />} />
         <Route path="new" element={<NewTicketPage />} />
         <Route path="weekly" element={<WeeklyPage />} />
+        <Route path="gantt" element={<GanttPage />} />
         <Route path="stats" element={<StatsPage />} />
         <Route path="screening" element={<ScreeningPage />} />
         <Route path="settings" element={<SettingsPage />} />

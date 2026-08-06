@@ -422,6 +422,62 @@ export default function TicketDetailPage() {
               </p>
             </div>
 
+            {/* 계획 일정은 Gantt 의 입력값입니다. 신규개발일 때만 노출합니다. */}
+            {meta?.work_type === 'development' && (
+              <div className="rounded-md bg-violet-50/60 p-2">
+                <p className="mb-2 text-[11px] font-medium text-violet-900">
+                  계획 일정 (Gantt)
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="label" htmlFor="planned-start">
+                      시작
+                    </label>
+                    <input
+                      id="planned-start"
+                      type="date"
+                      className="field"
+                      disabled={!editable}
+                      defaultValue={ticket.planned_start_date ?? ''}
+                      onChange={(event) =>
+                        updateFields.mutate(
+                          {
+                            ticketId: ticket.id,
+                            patch: { planned_start_date: event.target.value || null },
+                          },
+                          { onError: fail },
+                        )
+                      }
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="planned-end">
+                      종료
+                    </label>
+                    <input
+                      id="planned-end"
+                      type="date"
+                      className="field"
+                      disabled={!editable}
+                      defaultValue={ticket.planned_end_date ?? ''}
+                      onChange={(event) =>
+                        updateFields.mutate(
+                          {
+                            ticketId: ticket.id,
+                            patch: { planned_end_date: event.target.value || null },
+                          },
+                          { onError: fail },
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+                <p className="mt-1 text-[11px] text-violet-800">
+                  비워 두면 Gantt 에 접수일·기한으로 대신 그려집니다 (점선).
+                </p>
+              </div>
+            )}
+
             <div>
               <label className="label" htmlFor="estimated-days">
                 예상 공수 (사람일)

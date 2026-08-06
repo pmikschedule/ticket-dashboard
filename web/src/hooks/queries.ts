@@ -267,7 +267,13 @@ export function useUpdateTicketFields() {
       patch,
     }: {
       ticketId: number
-      patch: { subject?: string; description?: string; due_date?: string | null }
+      patch: {
+        subject?: string
+        description?: string
+        due_date?: string | null
+        planned_start_date?: string | null
+        planned_end_date?: string | null
+      }
     }) => api.updateTicketFields(ticketId, patch),
     onSuccess: (_data, variables) => invalidateTicket(queryClient, variables.ticketId),
   })
