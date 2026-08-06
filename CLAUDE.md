@@ -63,8 +63,8 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
 ## 명령
 
 ```bash
-cd web   && npm test && npm run build   # 순수 로직 83개 + 타입체크
-cd agent && pytest -q                   # 순수 로직·파이프라인 114개
+cd web   && npm test && npm run build   # 순수 로직 115개 + 타입체크
+cd agent && pytest -q                   # 순수 로직·파이프라인 138개
 cd agent && ticket-agent doctor         # 설정·연결 점검
 ```
 
