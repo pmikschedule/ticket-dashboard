@@ -6,7 +6,9 @@ import {
   CATEGORY_LABELS,
   SEVERITY_LABELS,
   SEVERITY_RAMP,
+  RESOLUTION_LABELS,
   STATUS_LABELS,
+  UNSPECIFIED_RESOLUTION,
   WORK_TYPE_LABELS,
   WORK_TYPE_RAMP,
 } from '../lib/constants'
@@ -139,6 +141,22 @@ export default function StatsPage() {
         />
       </div>
 
+      {/*
+        지표가 무엇을 빼고 잰 값인지 밝힙니다. 안 밝히면 보는 사람은
+        벽시계 시간으로 읽고, 그러면 숫자를 잘못 씁니다.
+      */}
+      <p className="text-xs text-slate-500">
+        MTTA·MTTR 은 <strong>보류(On Hold)에 머문 시간을 뺀</strong> 값입니다 — 요청자
+        회신을 기다린 시간은 팀이 일한 시간이 아닙니다. 반려·중복·취소·처리하지 않음으로
+        끝난 건은 모수에서 뺐습니다. 리드타임(접수→완료)은 요청자가 실제로 겪은 시간이라
+        보류를 빼지 않습니다.
+        {stats.onHold > 0 && (
+          <span className="ml-1 font-medium text-amber-700">
+            지금 보류 중 {stats.onHold}건.
+          </span>
+        )}
+      </p>
+
       <ColumnTrend title="최근 14일 접수 추이" subtitle="메일 수신일 기준" data={stats.intake} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -167,6 +185,21 @@ export default function StatsPage() {
             label: bucket.label,
             value: bucket.count,
           }))}
+        />
+
+        <BarList
+          title="종료 방식 (완료 건)"
+          emptyMessage="아직 완료된 건이 없습니다."
+          data={[
+            ...stats.byResolution.map((bucket) => ({
+              label: RESOLUTION_LABELS[bucket.key],
+              value: bucket.count,
+            })),
+            // 안 고른 건을 'Fixed' 에 섞지 않고 그대로 드러냅니다.
+            ...(stats.unspecifiedResolution > 0
+              ? [{ label: UNSPECIFIED_RESOLUTION, value: stats.unspecifiedResolution }]
+              : []),
+          ]}
         />
 
         <BarList

@@ -20,6 +20,9 @@ function row(overrides: Partial<LeadTimeRow> = {}): LeadTimeRow {
     estimated_days: null,
     promoted_at: null,
     completed_at: null,
+    resolution: null,
+    hold_reason: null,
+    hold_hours: 0,
     started_at: null,
     wait_hours: null,
     repair_hours: null,
@@ -113,7 +116,7 @@ describe('buildWeeklyRows', () => {
     const rows = buildWeeklyRows([row({ work_type: 'incident' })], range, LOOKUPS, THURSDAY)
     expect(rows[0].workType).toBe('장애')
     expect(rows[0].severity).toBe('Medium')
-    expect(rows[0].status).toBe('진행 중')
+    expect(rows[0].status).toBe('In Progress')
   })
 
   it('등록표에 없는 시스템은 미분류', () => {
@@ -193,11 +196,17 @@ describe('summarizeWeekly', () => {
       THURSDAY,
     )
     const summary = summarizeWeekly(rows)
-    expect(summary).toEqual({ completed: 1, received: 1, ongoing: 1, overdue: 1 })
+    expect(summary).toEqual({ completed: 1, received: 1, ongoing: 1, overdue: 1, onHold: 0 })
   })
 
   it('빈 목록', () => {
-    expect(summarizeWeekly([])).toEqual({ completed: 0, received: 0, ongoing: 0, overdue: 0 })
+    expect(summarizeWeekly([])).toEqual({
+      completed: 0,
+      received: 0,
+      ongoing: 0,
+      overdue: 0,
+      onHold: 0,
+    })
   })
 })
 

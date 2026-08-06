@@ -5,26 +5,140 @@
  * 셋 중 하나만 고치면 저장이 실패하므로 세 곳을 함께 수정하세요.
  */
 
-export const STATUSES = ['intake', 'triage', 'in_progress', 'testing', 'deploy', 'done'] as const
+/**
+ * 상태. 보드 열 순서이기도 합니다.
+ *
+ * on_hold(보류)는 **파이프라인의 단계가 아니라 옆길**입니다. 어느 단계에서든
+ * 들어갔다 원래 자리로 돌아옵니다. 그래서 순서가 있는 이동에는 STATUSES 가
+ * 아니라 PIPELINE_STATUSES 를 씁니다.
+ *
+ * 보드에서는 '진행 중' 옆에 둡니다 — 끝으로 밀어 두면 보류 건이 잊힙니다.
+ */
+export const STATUSES = [
+  'intake',
+  'triage',
+  'in_progress',
+  'on_hold',
+  'testing',
+  'deploy',
+  'done',
+] as const
 export type Status = (typeof STATUSES)[number]
 
+/** 순서가 있는 단계. 보류는 여기 없습니다. */
+export const PIPELINE_STATUSES = [
+  'intake',
+  'triage',
+  'in_progress',
+  'testing',
+  'deploy',
+  'done',
+] as const
+export type PipelineStatus = (typeof PIPELINE_STATUSES)[number]
+
+export function isPipelineStatus(status: Status): status is PipelineStatus {
+  return status !== 'on_hold'
+}
+
+/**
+ * 내부 화면용 라벨 — 영어.
+ *
+ * 저장값이 원래 영어이고, 이슈 트래킹 단계는 한국어로 옮기면 오히려 어색해집니다
+ * ('triage' 를 '분석/할당' 두 단어로 붙여 놨던 것이 그 증상이었습니다).
+ * 화면과 DB·로그가 같은 단어를 쓰면 옮겨 읽을 일이 없습니다.
+ */
 export const STATUS_LABELS: Record<Status, string> = {
+  intake: 'Intake',
+  triage: 'Triage',
+  in_progress: 'In Progress',
+  on_hold: 'On Hold',
+  testing: 'Testing',
+  deploy: 'Deploy',
+  done: 'Done',
+}
+
+/**
+ * 요청자에게 나가는 회신 메일용 라벨 — 한국어.
+ *
+ * 메일을 받는 사람은 재무팀·물류팀·인사팀이지 IT 팀이 아닙니다.
+ * 그분들에게 'Deploy' 는 설명이 필요한 단어입니다.
+ * 에이전트 쪽 같은 목적의 라벨은 agent/src/ticket_agent/constants.py 에 있습니다.
+ */
+export const STATUS_LABELS_KO: Record<Status, string> = {
   intake: '접수 대기',
-  triage: '분석/할당',
+  triage: '분석 중',
   in_progress: '진행 중',
+  on_hold: '보류',
   testing: '테스트',
   deploy: '배포',
   done: '완료',
 }
 
-/** 칸반 열 색상. 진행할수록 짙어집니다. */
+/** 칸반 열 색상. 진행할수록 짙어지고, 보류만 옆길이라 따뜻한 색입니다. */
 export const STATUS_ACCENT: Record<Status, string> = {
   intake: 'bg-slate-400',
   triage: 'bg-sky-400',
   in_progress: 'bg-indigo-500',
+  on_hold: 'bg-amber-400',
   testing: 'bg-violet-500',
-  deploy: 'bg-amber-500',
+  deploy: 'bg-orange-500',
   done: 'bg-emerald-500',
+}
+
+/**
+ * 종료 방식 — 상태와 다른 축입니다.
+ *
+ * 상태는 "지금 누가 무엇을 하고 있는가", 종료 방식은 "어떻게 끝났는가".
+ * done 하나로 뭉치면 "완료 12건" 중 몇 건을 실제로 고쳤는지 알 수 없습니다.
+ */
+export const RESOLUTIONS = ['fixed', 'rejected', 'duplicate', 'wontfix', 'cancelled'] as const
+export type Resolution = (typeof RESOLUTIONS)[number]
+
+export const RESOLUTION_LABELS: Record<Resolution, string> = {
+  fixed: 'Fixed',
+  rejected: 'Rejected',
+  duplicate: 'Duplicate',
+  wontfix: "Won't Fix",
+  cancelled: 'Cancelled',
+}
+
+export const RESOLUTION_LABELS_KO: Record<Resolution, string> = {
+  fixed: '처리 완료',
+  rejected: '반려 (오접수)',
+  duplicate: '중복',
+  wontfix: '처리하지 않음',
+  cancelled: '요청자 취소',
+}
+
+export const RESOLUTION_HINTS: Record<Resolution, string> = {
+  fixed: '요청한 대로 처리했습니다.',
+  rejected: '요청이 아니었거나 우리 담당이 아닙니다 (자동 접수 오판 포함).',
+  duplicate: '같은 내용의 티켓이 이미 있습니다.',
+  wontfix: '검토했고, 하지 않기로 결정했습니다.',
+  cancelled: '요청자가 거둬들였습니다.',
+}
+
+/** 종료 방식이 없을 때 화면에 쓰는 문구. 'fixed' 로 채우지 않습니다. */
+export const UNSPECIFIED_RESOLUTION = '미지정'
+
+/**
+ * 실제 처리 작업으로 셀 종료 방식.
+ *
+ * 반려·중복·취소는 팀이 고친 것이 아니므로 MTTA/MTTR·리드타임 모수에서 뺍니다.
+ * 넣어 두면 "반려까지 3분" 같은 건이 평균을 끌어내려 지표가 좋아 보입니다.
+ *
+ * wontfix 는 **뺍니다** — 검토는 했지만 수리는 안 했으므로 수리 시간이 없습니다.
+ * null(미지정)은 넣습니다. 옛 데이터이고, 빼면 지표의 모수가 사라집니다.
+ */
+export const NON_WORK_RESOLUTIONS: readonly Resolution[] = [
+  'rejected',
+  'duplicate',
+  'wontfix',
+  'cancelled',
+]
+
+export function countsAsWork(resolution: Resolution | null | undefined): boolean {
+  return !resolution || !NON_WORK_RESOLUTIONS.includes(resolution)
 }
 
 export const SEVERITIES = ['critical', 'high', 'medium', 'low'] as const

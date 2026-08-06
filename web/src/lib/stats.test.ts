@@ -27,6 +27,9 @@ function row(overrides: Partial<LeadTimeRow> = {}): LeadTimeRow {
     estimated_days: null,
     promoted_at: null,
     completed_at: null,
+    resolution: null,
+    hold_reason: null,
+    hold_hours: 0,
     started_at: null,
     wait_hours: null,
     repair_hours: null,
@@ -150,7 +153,7 @@ describe('buildDashboardStats', () => {
   it('모든 코드값이 버킷에 남습니다 — 0건도 항목이 사라지지 않습니다', () => {
     const stats = buildDashboardStats(rows, SYSTEMS)
     expect(stats.bySeverity).toHaveLength(4)
-    expect(stats.byStatus).toHaveLength(6)
+    expect(stats.byStatus).toHaveLength(7)
     expect(stats.byCategory).toHaveLength(4)
     expect(stats.byWorkType).toHaveLength(3)
   })
@@ -231,5 +234,56 @@ describe('MTTA / MTTR — 장애만 대상', () => {
       row({ work_type: 'incident', wait_hours: null, repair_hours: null }),
     ])
     expect(stats.incidentRepair.samples).toBe(0)
+  })
+})
+
+describe('종료 방식과 통계 모수', () => {
+  it('반려·중복·취소·처리안함은 리드타임 모수에서 빠집니다', () => {
+    const rows = [
+      row({ ticket_id: 1, resolution: 'fixed', lead_time_hours: 10 }),
+      row({ ticket_id: 2, resolution: 'rejected', lead_time_hours: 0.05 }),
+      row({ ticket_id: 3, resolution: 'duplicate', lead_time_hours: 0.05 }),
+      row({ ticket_id: 4, resolution: 'cancelled', lead_time_hours: 0.05 }),
+      row({ ticket_id: 5, resolution: 'wontfix', lead_time_hours: 0.05 }),
+    ]
+    const summary = summarizeLeadTime(rows)
+    expect(summary.samples).toBe(1)
+    expect(summary.averageHours).toBe(10)
+  })
+
+  it('종료 방식이 없는 건은 남깁니다 — 빼면 옛 데이터의 모수가 사라집니다', () => {
+    const summary = summarizeLeadTime([row({ resolution: null, lead_time_hours: 8 })])
+    expect(summary.samples).toBe(1)
+  })
+
+  it('MTTR 모수에서도 반려가 빠집니다', () => {
+    const stats = buildDashboardStats([
+      row({ ticket_id: 1, work_type: 'incident', resolution: 'fixed', repair_hours: 6 }),
+      row({ ticket_id: 2, work_type: 'incident', resolution: 'rejected', repair_hours: 0.01 }),
+    ])
+    expect(stats.incidentRepair.samples).toBe(1)
+    expect(stats.incidentRepair.averageHours).toBe(6)
+  })
+
+  it('완료 건의 종료 방식을 세고, 안 고른 건은 따로 셉니다', () => {
+    const stats = buildDashboardStats([
+      row({ ticket_id: 1, status: 'done', resolution: 'fixed' }),
+      row({ ticket_id: 2, status: 'done', resolution: 'rejected' }),
+      row({ ticket_id: 3, status: 'done', resolution: null }),
+      row({ ticket_id: 4, status: 'in_progress', resolution: null }),
+    ])
+    const byKey = Object.fromEntries(stats.byResolution.map((b) => [b.key, b.count]))
+    expect(byKey.fixed).toBe(1)
+    expect(byKey.rejected).toBe(1)
+    // 완료가 아닌 건은 종료 방식 집계에 끼지 않습니다.
+    expect(stats.unspecifiedResolution).toBe(1)
+  })
+
+  it('보류 중인 건을 셉니다', () => {
+    const stats = buildDashboardStats([
+      row({ ticket_id: 1, status: 'on_hold' }),
+      row({ ticket_id: 2, status: 'in_progress' }),
+    ])
+    expect(stats.onHold).toBe(1)
   })
 })

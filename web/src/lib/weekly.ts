@@ -8,6 +8,7 @@
 
 import {
   CATEGORY_LABELS,
+  RESOLUTION_LABELS,
   SEVERITY_LABELS,
   STATUS_LABELS,
   UNCLASSIFIED_SYSTEM,
@@ -31,8 +32,12 @@ export interface WeeklyRow {
   receivedAt: string
   dueDate: string
   completedAt: string
+  /** 어떻게 끝났는가. 완료가 아니거나 안 골랐으면 빈 문자열 — 'Fixed' 로 채우지 않습니다 */
+  resolution: string
   /** 접수 → 완료. 완료되지 않았으면 빈 문자열 */
   leadTime: string
+  /** 보류에 머문 시간. 없으면 빈 문자열 */
+  onHold: string
   overdue: string
 }
 
@@ -144,7 +149,9 @@ export function buildWeeklyRows(
         receivedAt: dateOnly(row.received_at),
         dueDate: row.due_date ?? '',
         completedAt: dateOnly(row.completed_at),
+        resolution: row.resolution ? RESOLUTION_LABELS[row.resolution] : '',
         leadTime: hoursText(row.lead_time_hours),
+        onHold: row.hold_hours > 0 ? hoursText(row.hold_hours) : '',
         overdue: overdue ? '초과' : '',
       }
     })
@@ -160,6 +167,8 @@ export interface WeeklySummary {
   received: number
   ongoing: number
   overdue: number
+  /** 이 주에 보류 상태인 건 — 진행 중과 섞으면 팀이 손대고 있는 줄 압니다 */
+  onHold: number
 }
 
 export function summarizeWeekly(rows: WeeklyRow[]): WeeklySummary {
@@ -168,6 +177,7 @@ export function summarizeWeekly(rows: WeeklyRow[]): WeeklySummary {
     received: rows.filter((r) => r.bucket === '금주 접수').length,
     ongoing: rows.filter((r) => r.bucket === '진행 중').length,
     overdue: rows.filter((r) => r.overdue === '초과').length,
+    onHold: rows.filter((r) => r.status === STATUS_LABELS.on_hold).length,
   }
 }
 
@@ -186,6 +196,8 @@ export const WEEKLY_COLUMNS: { header: string; key: keyof WeeklyRow; width: numb
   { header: '기한', key: 'dueDate', width: 12 },
   { header: '기한초과', key: 'overdue', width: 9 },
   { header: '완료일', key: 'completedAt', width: 12 },
+  { header: '종료 방식', key: 'resolution', width: 12 },
+  { header: '보류', key: 'onHold', width: 9 },
   { header: '소요', key: 'leadTime', width: 10 },
 ]
 
@@ -224,7 +236,7 @@ export async function downloadWeeklyExcel(
   const sub = sheet.getCell(2, 1)
   sub.value =
     `금주 완료 ${summary.completed}건 · 금주 접수 ${summary.received}건 · ` +
-    `진행 중 ${summary.ongoing}건 · 기한 초과 ${summary.overdue}건`
+    `진행 중 ${summary.ongoing}건 · 보류 ${summary.onHold}건 · 기한 초과 ${summary.overdue}건`
   sub.font = { size: 10, color: { argb: 'FF52514E' } }
 
   // 헤더

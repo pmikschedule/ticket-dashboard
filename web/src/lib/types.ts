@@ -1,4 +1,14 @@
-import type { Category, Role, RuleKind, ScanOutcome, Severity, Status, SystemCode, WorkType } from './constants'
+import type {
+  Category,
+  Resolution,
+  Role,
+  RuleKind,
+  ScanOutcome,
+  Severity,
+  Status,
+  SystemCode,
+  WorkType,
+} from './constants'
 
 export interface AppUser {
   id: string
@@ -30,6 +40,12 @@ export interface TicketMeta {
   /** 분류에 실패한 이유. 값이 있으면 화면에 배지로 드러냅니다 — 숨기면 아무도 모릅니다. */
   llm_error: string | null
   completed_at: string | null
+  /** 어떻게 끝났는가. done 일 때만 뜻이 있고, null 은 '미지정' 이지 'fixed' 가 아닙니다 */
+  resolution: Resolution | null
+  /** 무엇을 기다리는지. on_hold 를 벗어나면 트리거가 지웁니다 */
+  hold_reason: string | null
+  /** 보류 직전 단계 — 보류를 풀 때 돌아갈 자리 */
+  hold_from_status: Status | null
   updated_at: string
 }
 
@@ -116,11 +132,15 @@ export interface LeadTimeRow {
   estimated_days: number | null
   promoted_at: string | null
   completed_at: string | null
+  resolution: Resolution | null
+  hold_reason: string | null
   /** 착수 시각 — 상태가 처음 in_progress 로 바뀐 때 */
   started_at: string | null
-  /** 접수 → 착수. 대응까지 걸린 대기 시간 (MTTA) */
+  /** 보류에 머문 시간의 합. 아직 보류 중이면 지금까지 */
+  hold_hours: number
+  /** 접수 → 착수, **보류 시간을 뺀** 값. 대응까지 걸린 대기 시간 (MTTA) */
   wait_hours: number | null
-  /** 착수 → 완료. 팀이 실제로 고친 시간 (MTTR) */
+  /** 착수 → 완료, **보류 시간을 뺀** 값. 팀이 실제로 고친 시간 (MTTR) */
   repair_hours: number | null
   /** 접수 → 완료. 요청자가 겪은 전체 시간 */
   lead_time_hours: number | null

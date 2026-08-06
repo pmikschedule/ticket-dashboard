@@ -33,14 +33,30 @@ import {
   CATEGORY_LABELS,
   SEVERITIES,
   SEVERITY_LABELS,
+  countsAsWork,
+  RESOLUTIONS,
+  RESOLUTION_HINTS,
+  RESOLUTION_LABELS,
+  RESOLUTION_LABELS_KO,
   STATUS_LABELS,
+  UNSPECIFIED_RESOLUTION,
+  type Resolution,
   UNCLASSIFIED_SYSTEM,
   WORK_TYPES,
   WORK_TYPE_LABELS,
   type Status,
 } from '../lib/constants'
 import { formatBytes, formatDate, formatDateTime } from '../lib/format'
-import { allowedTransitions, canAssign, canEditTicket, canDeleteComment, canDeleteTicket, isOverdue } from '../lib/workflow'
+import {
+  allowedTransitions,
+  canAssign,
+  canEditTicket,
+  canDeleteComment,
+  canDeleteTicket,
+  isOverdue,
+  requiresHoldReason,
+  requiresResolution,
+} from '../lib/workflow'
 
 export default function TicketDetailPage() {
   const params = useParams()
@@ -69,6 +85,10 @@ export default function TicketDetailPage() {
   const [draftSubject, setDraftSubject] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [draftDue, setDraftDue] = useState('')
+  // 보류·완료는 값을 하나 더 받아야 해서 버튼 한 번으로 끝내지 않습니다.
+  const [pendingStatus, setPendingStatus] = useState<Status | null>(null)
+  const [holdReason, setHoldReason] = useState('')
+  const [resolution, setResolution] = useState<Resolution | ''>('')
 
   const userNames = useMemo(
     () => new Map(users.map((entry) => [entry.id, entry.name || entry.email])),
@@ -87,7 +107,9 @@ export default function TicketDetailPage() {
   const meta = ticket.ticket_meta
   const editable = canEditTicket(user, meta)
   const overdue = isOverdue(ticket.due_date, meta?.status)
-  const transitions = meta ? allowedTransitions(meta.status, isAdmin) : []
+  const transitions = meta
+    ? allowedTransitions(meta.status, isAdmin, meta.hold_from_status)
+    : []
 
   function fail(err: unknown) {
     setActionError(err instanceof Error ? err.message : String(err))
@@ -334,6 +356,36 @@ export default function TicketDetailPage() {
             <h2 className="text-sm font-semibold text-slate-800">상태</h2>
             <div className="mt-2">{meta && <StatusBadge status={meta.status} />}</div>
 
+            {/* 지금 보류 중이라면 무엇을 기다리는지부터 보여줍니다 */}
+            {meta?.status === 'on_hold' && (
+              <div className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+                <p className="font-medium">
+                  보류 중
+                  {meta.hold_from_status && (
+                    <span className="font-normal">
+                      {' '}
+                      — 풀면 {STATUS_LABELS[meta.hold_from_status]} 로 돌아갑니다
+                    </span>
+                  )}
+                </p>
+                <p className="mt-0.5">{meta.hold_reason || '사유가 적혀 있지 않습니다.'}</p>
+              </div>
+            )}
+
+            {/* 완료된 건은 어떻게 끝났는지가 상태만큼 중요합니다 */}
+            {meta?.status === 'done' && (
+              <p className="mt-2 text-xs text-slate-600">
+                종료 방식:{' '}
+                {meta.resolution ? (
+                  <span className="font-medium text-slate-900">
+                    {RESOLUTION_LABELS[meta.resolution]}
+                  </span>
+                ) : (
+                  <span className="text-slate-400">{UNSPECIFIED_RESOLUTION}</span>
+                )}
+              </p>
+            )}
+
             {!editable ? (
               <p className="mt-3 text-xs text-slate-500">
                 본인에게 할당된 티켓만 상태를 바꿀 수 있습니다.
@@ -345,16 +397,118 @@ export default function TicketDetailPage() {
                     key={status}
                     type="button"
                     className="btn-secondary text-xs"
-                    onClick={() =>
-                      updateStatus.mutate(
-                        { ticketId: ticket.id, status },
-                        { onError: fail },
-                      )
-                    }
+                    onClick={() => setPendingStatus(status)}
                   >
                     → {STATUS_LABELS[status as Status]}
                   </button>
                 ))}
+                {transitions.length === 0 && (
+                  <p className="text-xs text-slate-500">
+                    보류를 풀 자리를 알 수 없습니다 (옛 티켓). 관리자가 상태를 옮겨야 합니다.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* 보류·완료는 값을 하나 더 받고 나서 옮깁니다 */}
+            {pendingStatus && (
+              <div className="mt-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+                <p className="text-xs font-medium text-slate-800">
+                  → {STATUS_LABELS[pendingStatus]}
+                </p>
+
+                {requiresHoldReason(pendingStatus) && (
+                  <div className="mt-2">
+                    <label className="label" htmlFor="hold-reason">
+                      무엇을 기다립니까?
+                    </label>
+                    <textarea
+                      id="hold-reason"
+                      className="field"
+                      rows={2}
+                      autoFocus
+                      placeholder="예) 요청자에게 재현 화면 요청함 — 회신 대기"
+                      value={holdReason}
+                      onChange={(event) => setHoldReason(event.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      사유 없는 보류는 왜 멈췄는지 아무도 모르게 됩니다. 보류 시간은
+                      MTTA·MTTR 에서 빠집니다.
+                    </p>
+                  </div>
+                )}
+
+                {requiresResolution(pendingStatus) && (
+                  <div className="mt-2">
+                    <label className="label" htmlFor="resolution">
+                      어떻게 끝났습니까?
+                    </label>
+                    <select
+                      id="resolution"
+                      className="field"
+                      autoFocus
+                      value={resolution}
+                      onChange={(event) => setResolution(event.target.value as Resolution)}
+                    >
+                      <option value="">고르세요</option>
+                      {RESOLUTIONS.map((value) => (
+                        <option key={value} value={value}>
+                          {RESOLUTION_LABELS[value]} — {RESOLUTION_LABELS_KO[value]}
+                        </option>
+                      ))}
+                    </select>
+                    {resolution && (
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {RESOLUTION_HINTS[resolution as Resolution]}
+                        {!countsAsWork(resolution as Resolution) &&
+                          ' 이 건은 처리 실적·MTTR 모수에서 빠집니다.'}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-3 flex gap-1.5">
+                  <button
+                    type="button"
+                    className="btn-primary text-xs"
+                    disabled={
+                      updateStatus.isPending ||
+                      (requiresHoldReason(pendingStatus) && !holdReason.trim()) ||
+                      (requiresResolution(pendingStatus) && !resolution)
+                    }
+                    onClick={() =>
+                      updateStatus.mutate(
+                        {
+                          ticketId: ticket.id,
+                          status: pendingStatus,
+                          ...(requiresHoldReason(pendingStatus)
+                            ? { hold_reason: holdReason.trim() }
+                            : {}),
+                          ...(requiresResolution(pendingStatus)
+                            ? { resolution: resolution as Resolution }
+                            : {}),
+                        },
+                        {
+                          onError: fail,
+                          onSuccess: () => {
+                            setPendingStatus(null)
+                            setHoldReason('')
+                            setResolution('')
+                          },
+                        },
+                      )
+                    }
+                  >
+                    {updateStatus.isPending ? '옮기는 중…' : '옮기기'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs"
+                    onClick={() => setPendingStatus(null)}
+                  >
+                    취소
+                  </button>
+                </div>
               </div>
             )}
           </section>

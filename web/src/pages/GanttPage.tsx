@@ -43,6 +43,9 @@ export default function GanttPage() {
         <h1 className="text-base font-semibold text-slate-900">신규개발 일정</h1>
         <p className="mt-0.5 text-sm text-slate-500">
           전체 {summary.total}건 · 일정 있음 {summary.dated}건 · 완료 {summary.done}건
+          {summary.held > 0 && (
+            <span className="ml-1 font-medium text-amber-700">· 보류 {summary.held}건</span>
+          )}
           {summary.overdue > 0 && (
             <span className="ml-1 font-medium text-rose-700">· 기한 초과 {summary.overdue}건</span>
           )}
@@ -122,24 +125,38 @@ export default function GanttPage() {
                       style={{
                         left: `${bar.offsetPercent}%`,
                         width: `${bar.widthPercent}%`,
-                        backgroundColor: bar.inferred ? '#cbd5e1' : '#cde2fb',
+                        backgroundColor: bar.held
+                          ? '#fde68a'
+                          : bar.inferred
+                            ? '#cbd5e1'
+                            : '#cde2fb',
                       }}
                       title={
                         `${formatDate(bar.start.toISOString())} ~ ${formatDate(bar.end.toISOString())}` +
                         (bar.inferred ? ' (계획 미입력 — 접수일·기한으로 표시)' : '') +
-                        ` · 진척 ${bar.progress}%`
+                        (bar.progress === null ? ' · 보류 중 (진척 알 수 없음)' : ` · 진척 ${bar.progress}%`)
                       }
                     >
-                      {/* 진척 — 상태에서 유도한 값 */}
+                      {/* 진척 — 상태에서 유도한 값. 보류 중이면 채우지 않습니다 */}
+                      {bar.progress !== null && (
+                        <span
+                          className="absolute inset-y-0 left-0 rounded"
+                          style={{
+                            width: `${bar.progress}%`,
+                            backgroundColor: bar.overdue ? '#c0392b' : SERIES_HUE,
+                          }}
+                        />
+                      )}
                       <span
-                        className="absolute inset-y-0 left-0 rounded"
-                        style={{
-                          width: `${bar.progress}%`,
-                          backgroundColor: bar.overdue ? '#c0392b' : SERIES_HUE,
-                        }}
-                      />
-                      <span className="relative z-10 px-2 text-[11px] font-medium text-white mix-blend-normal">
-                        {bar.progress > 20 ? `${bar.progress}%` : ''}
+                        className={`relative z-10 px-2 text-[11px] font-medium ${
+                          bar.progress === null ? 'text-amber-900' : 'text-white'
+                        }`}
+                      >
+                        {bar.progress === null
+                          ? 'On Hold'
+                          : bar.progress > 20
+                            ? `${bar.progress}%`
+                            : ''}
                       </span>
                     </span>
                   </div>
@@ -180,6 +197,10 @@ export default function GanttPage() {
               aria-hidden
             />
             계획 미입력 — 접수일·기한으로 표시
+          </li>
+          <li className="flex items-center gap-1.5">
+            <span className="h-3 w-5 rounded bg-[#fde68a]" aria-hidden />
+            보류 중 — 진척을 알 수 없어 비워 둡니다
           </li>
           <li className="flex items-center gap-1.5">
             <span className="h-3.5 w-0.5 bg-rose-500" aria-hidden />

@@ -6,15 +6,34 @@ DB check 제약(supabase/schema.sql)과 웹의 src/lib/constants.ts 와 **같은
 
 from __future__ import annotations
 
-# 상태 파이프라인 (docs/SPEC-EMAIL-TICKET.md 3.2)
-STATUSES = ("intake", "triage", "in_progress", "testing", "deploy", "done")
+# 상태 (docs/SPEC-EMAIL-TICKET.md 3.2)
+#
+# on_hold(보류)는 파이프라인의 단계가 아니라 옆길입니다 — 어느 단계에서든 들어갔다
+# 원래 자리로 돌아옵니다. 순서가 필요한 곳에서는 PIPELINE_STATUSES 를 쓰세요.
+STATUSES = ("intake", "triage", "in_progress", "on_hold", "testing", "deploy", "done")
+PIPELINE_STATUSES = ("intake", "triage", "in_progress", "testing", "deploy", "done")
+
+# 라벨은 **한국어로 둡니다.** 에이전트가 이 라벨을 쓰는 곳은 요청자에게 나가는
+# 완료 회신 메일뿐이고(summarize.py), 받는 사람은 IT 팀이 아닙니다.
+# 내부 화면은 영어를 씁니다 — web/src/lib/constants.ts 의 STATUS_LABELS.
 STATUS_LABELS = {
     "intake": "접수 대기",
-    "triage": "분석/할당",
+    "triage": "분석 중",
     "in_progress": "진행 중",
+    "on_hold": "보류",
     "testing": "테스트",
     "deploy": "배포",
     "done": "완료",
+}
+
+# 종료 방식. 상태와 다른 축이고, done 일 때만 뜻이 있습니다.
+RESOLUTIONS = ("fixed", "rejected", "duplicate", "wontfix", "cancelled")
+RESOLUTION_LABELS = {
+    "fixed": "처리 완료",
+    "rejected": "반려 (오접수)",
+    "duplicate": "중복",
+    "wontfix": "처리하지 않음",
+    "cancelled": "요청자 취소",
 }
 
 # 장애 등급

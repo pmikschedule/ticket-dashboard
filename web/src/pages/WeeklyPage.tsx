@@ -93,11 +93,16 @@ export default function WeeklyPage() {
 
       {error && <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {[
           { label: '금주 완료', value: summary.completed, tone: 'text-emerald-700' },
           { label: '금주 접수', value: summary.received, tone: 'text-slate-900' },
           { label: '진행 중', value: summary.ongoing, tone: 'text-slate-900' },
+          {
+            label: '보류',
+            value: summary.onHold,
+            tone: summary.onHold > 0 ? 'text-amber-700' : 'text-slate-400',
+          },
           {
             label: '기한 초과',
             value: summary.overdue,

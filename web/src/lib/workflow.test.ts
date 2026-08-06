@@ -10,6 +10,8 @@ import {
   canSendReply,
   isAdmin,
   isOverdue,
+  requiresHoldReason,
+  requiresResolution,
 } from './workflow'
 import type { AppUser, TicketMeta } from './types'
 
@@ -42,6 +44,9 @@ function meta(overrides: Partial<TicketMeta> = {}): TicketMeta {
     llm_reason: null,
     llm_error: null,
     completed_at: null,
+    resolution: null,
+    hold_reason: null,
+    hold_from_status: null,
     updated_at: '2026-08-05T00:00:00Z',
     ...overrides,
   }
@@ -49,11 +54,11 @@ function meta(overrides: Partial<TicketMeta> = {}): TicketMeta {
 
 describe('allowedTransitions', () => {
   it('팀원은 인접 단계로만', () => {
-    expect(allowedTransitions('in_progress', false)).toEqual(['triage', 'testing'])
+    expect(allowedTransitions('in_progress', false)).toEqual(['triage', 'testing', 'on_hold'])
   })
 
   it('첫 단계는 앞으로만', () => {
-    expect(allowedTransitions('intake', false)).toEqual(['triage'])
+    expect(allowedTransitions('intake', false)).toEqual(['triage', 'on_hold'])
   })
 
   it('마지막 단계는 뒤로만', () => {
@@ -62,7 +67,7 @@ describe('allowedTransitions', () => {
 
   it('관리자는 어디로든 (현재 상태 제외)', () => {
     const result = allowedTransitions('intake', true)
-    expect(result).toHaveLength(5)
+    expect(result).toHaveLength(6)
     expect(result).toContain('done')
     expect(result).not.toContain('intake')
   })
@@ -151,5 +156,42 @@ describe('isOverdue', () => {
   })
   it('완료된 티켓은 지연으로 보지 않습니다', () => {
     expect(isOverdue('2026-08-01', 'done', today)).toBe(false)
+  })
+})
+
+describe('보류(on_hold) 전이', () => {
+  it('완료가 아닌 단계에서는 보류로 갈 수 있습니다', () => {
+    for (const status of ['intake', 'triage', 'in_progress', 'testing', 'deploy'] as const) {
+      expect(allowedTransitions(status, false)).toContain('on_hold')
+    }
+  })
+
+  it('완료된 건은 보류할 수 없습니다 — 끝난 건은 기다릴 게 없습니다', () => {
+    expect(allowedTransitions('done', false)).not.toContain('on_hold')
+  })
+
+  it('보류에서는 직전 단계로만 돌아갑니다', () => {
+    expect(allowedTransitions('on_hold', false, 'testing')).toEqual(['testing'])
+  })
+
+  it('보류를 거쳐 단계를 건너뛸 수 없습니다', () => {
+    // testing 에서 보류했다면 done 으로 바로 갈 수 없어야 합니다.
+    expect(canMoveTo('on_hold', 'done', false, 'testing')).toBe(false)
+    expect(canMoveTo('on_hold', 'testing', false, 'testing')).toBe(true)
+  })
+
+  it('돌아갈 자리를 모르면 팀원은 못 움직입니다 (옛 티켓)', () => {
+    expect(allowedTransitions('on_hold', false, null)).toEqual([])
+  })
+
+  it('관리자는 보류에서도 어디로든', () => {
+    expect(allowedTransitions('on_hold', true, null)).toContain('done')
+  })
+
+  it('보류는 사유를, 완료는 종료 방식을 요구합니다', () => {
+    expect(requiresHoldReason('on_hold')).toBe(true)
+    expect(requiresHoldReason('in_progress')).toBe(false)
+    expect(requiresResolution('done')).toBe(true)
+    expect(requiresResolution('on_hold')).toBe(false)
   })
 })

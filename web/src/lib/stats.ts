@@ -7,11 +7,14 @@
 
 import {
   CATEGORIES,
+  countsAsWork,
+  RESOLUTIONS,
   SEVERITIES,
   STATUSES,
   UNCLASSIFIED_SYSTEM,
   WORK_TYPES,
   type Category,
+  type Resolution,
   type Severity,
   type Status,
   type WorkType,
@@ -58,6 +61,12 @@ export interface DashboardStats {
   bySeverity: CountBucket<Severity>[]
   byStatus: CountBucket<Status>[]
   byCategory: CountBucket<Category>[]
+  /** 완료 건의 종료 방식. 종료 방식을 안 고른 건은 unspecified 로 따로 셉니다 */
+  byResolution: CountBucket<Resolution>[]
+  /** 완료됐지만 종료 방식이 없는 건 — 'fixed' 로 채우지 않습니다 */
+  unspecifiedResolution: number
+  /** 지금 보류 중인 건 */
+  onHold: number
   /** 접수 → 완료. 요청자가 겪은 전체 시간 */
   leadTime: DurationSummary
   /** 접수 → 착수. 손대기까지의 대기 (MTTA) — 장애만 */
@@ -116,8 +125,19 @@ export function summarizeDurations(values: (number | null)[]): DurationSummary {
   }
 }
 
+/**
+ * 실제 처리 작업으로 셀 티켓만 남깁니다.
+ *
+ * 반려(오접수)·중복·취소·처리안함은 팀이 고친 것이 아닙니다. 모수에 넣으면
+ * "반려까지 3분" 같은 건이 평균을 끌어내려 지표가 실제보다 좋아 보입니다.
+ * 종료 방식이 없는(미지정) 건은 남깁니다 — 옛 데이터이고, 빼면 모수가 사라집니다.
+ */
+export function workRows(rows: LeadTimeRow[]): LeadTimeRow[] {
+  return rows.filter((row) => countsAsWork(row.resolution))
+}
+
 export function summarizeLeadTime(rows: LeadTimeRow[]): DurationSummary {
-  return summarizeDurations(rows.map((row) => row.lead_time_hours))
+  return summarizeDurations(workRows(rows).map((row) => row.lead_time_hours))
 }
 
 /**
@@ -193,7 +213,9 @@ export function buildDashboardStats(
 ): DashboardStats {
   const done = rows.filter((row) => row.status === 'done').length
   // MTTA/MTTR 은 장애만 대상으로 합니다. 신규개발과 섞으면 평균이 무의미해집니다.
-  const incidents = rows.filter((row) => row.work_type === 'incident')
+  // 반려·중복·취소는 수리한 것이 아니므로 여기서도 뺍니다(workRows).
+  const incidents = workRows(rows).filter((row) => row.work_type === 'incident')
+  const closed = rows.filter((row) => row.status === 'done')
 
   return {
     total: rows.length,
@@ -204,6 +226,12 @@ export function buildDashboardStats(
     bySeverity: countBy(rows, SEVERITIES, 'severity'),
     byStatus: countBy(rows, STATUSES, 'status'),
     byCategory: countBy(rows, CATEGORIES, 'category'),
+    byResolution: RESOLUTIONS.map((key) => ({
+      key,
+      count: closed.filter((row) => row.resolution === key).length,
+    })),
+    unspecifiedResolution: closed.filter((row) => !row.resolution).length,
+    onHold: rows.filter((row) => row.status === 'on_hold').length,
     leadTime: summarizeLeadTime(rows),
     incidentWait: summarizeDurations(incidents.map((row) => row.wait_hours)),
     incidentRepair: summarizeDurations(incidents.map((row) => row.repair_hours)),

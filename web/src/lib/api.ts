@@ -5,6 +5,7 @@
  * 쿼리가 화면에 흩어지면 RLS 위반이 어디서 났는지 추적할 수 없습니다.
  */
 
+import type { Resolution } from './constants'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
   AppSetting,
@@ -166,8 +167,20 @@ export async function fetchTicket(ticketId: number): Promise<TicketWithMeta> {
   return normalizeMeta(row)
 }
 
-export async function updateTicketStatus(ticketId: number, status: string): Promise<void> {
-  const { error } = await supabase.from('ticket_meta').update({ status }).eq('ticket_id', ticketId)
+/**
+ * 상태 변경.
+ *
+ * 보류 사유와 종료 방식은 상태와 **같은 요청**으로 보냅니다. 따로 보내면
+ * 사유 없는 보류나 종료 방식 없는 완료가 잠깐 존재하고, 그 사이에 다른 사람이
+ * 보면 사실과 다릅니다. 되돌리기(done→다른 상태)는 DB 트리거가 정리합니다.
+ */
+export async function updateTicketStatus(
+  ticketId: number,
+  status: string,
+  extra: { resolution?: Resolution | null; hold_reason?: string | null } = {},
+): Promise<void> {
+  const patch: Record<string, unknown> = { status, ...extra }
+  const { error } = await supabase.from('ticket_meta').update(patch).eq('ticket_id', ticketId)
   if (error) throw new Error(error.message)
 }
 

@@ -6,7 +6,12 @@ import { useAuth } from '../hooks/useAuth'
 import { useTickets, useUpdateStatus, useUsers } from '../hooks/queries'
 import { STATUSES, STATUS_ACCENT, STATUS_LABELS, type Status } from '../lib/constants'
 import type { TicketFilters, TicketWithMeta } from '../lib/types'
-import { canEditTicket, canMoveTo } from '../lib/workflow'
+import {
+  canEditTicket,
+  canMoveTo,
+  requiresHoldReason,
+  requiresResolution,
+} from '../lib/workflow'
 
 /** 칸반 보드 (기획서 3.2). 열은 상태 파이프라인 6단계 그대로입니다. */
 export default function BoardPage() {
@@ -45,10 +50,24 @@ export default function BoardPage() {
       setMoveError('본인에게 할당된 티켓만 옮길 수 있습니다.')
       return
     }
-    if (!canMoveTo(current, target, isAdmin)) {
+    if (!canMoveTo(current, target, isAdmin, ticket.ticket_meta?.hold_from_status)) {
       setMoveError(
-        `${STATUS_LABELS[current]} → ${STATUS_LABELS[target]} 로는 바로 옮길 수 없습니다. ` +
-          '팀원은 인접 단계로만 이동할 수 있습니다.',
+        current === 'on_hold'
+          ? '보류는 직전 단계로만 풀 수 있습니다. 티켓을 열어 확인하세요.'
+          : `${STATUS_LABELS[current]} → ${STATUS_LABELS[target]} 로는 바로 옮길 수 없습니다. ` +
+            '팀원은 인접 단계로만 이동할 수 있습니다.',
+      )
+      return
+    }
+
+    // 보류와 완료는 값을 하나 더 받아야 합니다 — 보류 사유, 종료 방식.
+    // 끌어서 옮기면 그걸 물어볼 자리가 없어서 사유 없는 보류와 종료 방식 없는
+    // 완료가 쌓입니다. 여기서는 막고 상세 화면으로 보냅니다.
+    if (requiresHoldReason(target) || requiresResolution(target)) {
+      setMoveError(
+        target === 'on_hold'
+          ? '보류로 옮기려면 무엇을 기다리는지 적어야 합니다. 티켓을 열어 주세요.'
+          : '완료로 옮기려면 종료 방식을 골라야 합니다. 티켓을 열어 주세요.',
       )
       return
     }

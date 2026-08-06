@@ -9,7 +9,7 @@
 import {
   CATEGORY_LABELS,
   SEVERITY_LABELS,
-  STATUS_LABELS,
+  STATUS_LABELS_KO,
   UNCLASSIFIED_SYSTEM,
   WORK_TYPE_LABELS,
   type Category,
@@ -67,7 +67,7 @@ export function buildReplyBody(
       ` / ${label(CATEGORY_LABELS, meta?.category as Category)}` +
       ` / ${label(SEVERITY_LABELS, meta?.severity as Severity)}`,
     `  · 대상 시스템: ${systemLabel || meta?.system_type || UNCLASSIFIED_SYSTEM}`,
-    `  · 처리 상태  : ${label(STATUS_LABELS, meta?.status as Status)}`,
+    `  · 처리 상태  : ${label(STATUS_LABELS_KO, meta?.status as Status)}`,
     `  · 완료일    : ${formatDate(meta?.completed_at)} (소요 ${formatHours(hours)})`,
   ]
 

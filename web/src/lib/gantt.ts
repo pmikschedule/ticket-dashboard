@@ -8,7 +8,7 @@
  * 보는 사람은 그게 실제 계획인 줄 압니다.
  */
 
-import { STATUSES, STATUS_LABELS, type Status } from './constants'
+import { PIPELINE_STATUSES, STATUS_LABELS, type PipelineStatus, type Status } from './constants'
 import type { LeadTimeRow } from './types'
 
 const DAY_MS = 86_400_000
@@ -19,7 +19,7 @@ const DAY_MS = 86_400_000
  * 별도로 입력받는 값이 아니라 **상태로부터 유도한 값**입니다.
  * 화면에 그 사실을 밝혀 두어야 실제 측정치로 오해하지 않습니다.
  */
-export const STATUS_PROGRESS: Record<Status, number> = {
+export const STATUS_PROGRESS: Record<PipelineStatus, number> = {
   intake: 0,
   triage: 10,
   in_progress: 40,
@@ -28,7 +28,14 @@ export const STATUS_PROGRESS: Record<Status, number> = {
   done: 100,
 }
 
-export function progressOf(status: Status): number {
+/**
+ * 보류 중인 건의 진척은 **모릅니다** — null 을 돌려줍니다.
+ *
+ * 보류는 파이프라인 밖이라 환산할 단계가 없습니다. 0% 로 채우면 90% 까지 갔다가
+ * 멈춘 건이 시작도 안 한 것처럼 보이고, 그 화면을 팀 전체가 봅니다.
+ */
+export function progressOf(status: Status): number | null {
+  if (status === 'on_hold') return null
   return STATUS_PROGRESS[status] ?? 0
 }
 
@@ -38,7 +45,10 @@ export interface GanttBar {
   assignee: string
   status: Status
   statusLabel: string
-  progress: number
+  /** 상태에서 유도한 진척률. 보류 중이면 알 수 없어 null 입니다 */
+  progress: number | null
+  /** 지금 보류 중 */
+  held: boolean
   start: Date
   end: Date
   /** 계획 일정이 없어 접수일·기한으로 대신 그린 경우 */
@@ -65,7 +75,13 @@ export interface GanttScale {
 export interface GanttModel {
   bars: GanttBar[]
   /** 시작·종료를 알 수 없어 막대를 그리지 못한 건 */
-  undated: { ticketId: number; subject: string; assignee: string; statusLabel: string }[]
+  undated: {
+    ticketId: number
+    subject: string
+    assignee: string
+    statusLabel: string
+    held: boolean
+  }[]
   scale: GanttScale | null
 }
 
@@ -182,6 +198,7 @@ export function buildGantt(
         subject: row.subject,
         assignee: lookups.userName(row.assignee_id) ?? '미배정',
         statusLabel: STATUS_LABELS[row.status] ?? row.status,
+        held: row.status === 'on_hold',
       })
   }
 
@@ -205,6 +222,7 @@ export function buildGantt(
         status: row.status,
         statusLabel: STATUS_LABELS[row.status] ?? row.status,
         progress: progressOf(row.status),
+        held: row.status === 'on_hold',
         start: span.start,
         end: span.end,
         inferred: span.inferred,
@@ -228,6 +246,8 @@ export interface GanttSummary {
   undated: number
   overdue: number
   done: number
+  /** 보류 중이라 진척을 알 수 없는 건 */
+  held: number
   /** 계획 일정이 없어 접수일·기한으로 대신 그린 건 */
   inferred: number
 }
@@ -239,12 +259,14 @@ export function summarizeGantt(model: GanttModel): GanttSummary {
     undated: model.undated.length,
     overdue: model.bars.filter((bar) => bar.overdue).length,
     done: model.bars.filter((bar) => bar.status === 'done').length,
+    held: model.bars.filter((bar) => bar.held).length +
+      model.undated.filter((entry) => entry.held).length,
     inferred: model.bars.filter((bar) => bar.inferred).length,
   }
 }
 
 /** 상태별 진척 범례. 화면에 "상태에서 유도한 값" 임을 밝히기 위해 씁니다. */
-export const PROGRESS_LEGEND = STATUSES.map((status) => ({
+export const PROGRESS_LEGEND = PIPELINE_STATUSES.map((status) => ({
   status,
   label: STATUS_LABELS[status],
   progress: STATUS_PROGRESS[status],

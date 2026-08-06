@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import * as api from '../lib/api'
+import type { Resolution } from '../lib/constants'
 import type { TicketFilters, TicketMeta } from '../lib/types'
 
 export const keys = {
@@ -229,8 +230,17 @@ export function useQueueManualIntake() {
 export function useUpdateStatus() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ ticketId, status }: { ticketId: number; status: string }) =>
-      api.updateTicketStatus(ticketId, status),
+    mutationFn: ({
+      ticketId,
+      status,
+      resolution,
+      hold_reason,
+    }: {
+      ticketId: number
+      status: string
+      resolution?: Resolution | null
+      hold_reason?: string | null
+    }) => api.updateTicketStatus(ticketId, status, { resolution, hold_reason }),
     onSuccess: (_data, variables) => invalidateTicket(queryClient, variables.ticketId),
   })
 }

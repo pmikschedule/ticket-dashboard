@@ -488,7 +488,12 @@ create policy att_storage_delete on storage.objects
 -- 13. 통계 뷰 — 리드타임 (기획서 3.2 통계 대시보드)
 --     화면에서 직접 집계하지 않고 이 뷰를 씁니다.
 -- ----------------------------------------------------------------------------
-create or replace view public.ticket_lead_times as
+-- 15.6 과 16.4 가 이 뷰를 더 넓은 컬럼으로 다시 만듭니다. `create or replace view`
+-- 는 컬럼을 **줄이지 못하므로**, 파일을 두 번째로 실행하면 여기서
+-- "cannot drop columns from view" 로 멈춥니다. 그래서 지우고 다시 만듭니다.
+drop view if exists public.ticket_lead_times;
+
+create view public.ticket_lead_times as
 select
   t.id                                                   as ticket_id,
   t.subject,
@@ -961,3 +966,263 @@ create policy manual_delete_admin on public.manual_intake
 alter table public.tickets add column if not exists intake_channel text;
 comment on column public.tickets.intake_channel is
   'null=메일 수집. 그 외에는 manual_intake.channel 값이 들어갑니다';
+
+-- ============================================================================
+-- 16. 상태 모델 보강 — 보류(on_hold)와 종료 방식(resolution)
+--
+-- 두 가지를 고칩니다.
+--
+--  (1) 보류가 없어서 MTTR 이 거짓말을 합니다.
+--      요청자 회신을 2주 기다린 건이 "수리에 2주 걸림" 으로 집계됩니다.
+--      팀이 손을 놓고 있던 시간과 팀이 일한 시간은 다른 사실입니다.
+--
+--  (2) done 이 "고쳐서 끝남" 과 "오접수라 반려" 를 같은 값에 뭉쳐 놓았습니다.
+--      접수 판정을 일부러 느슨하게 잡았으므로(놓치는 것보다 잘못 접수되는 게 낫다)
+--      오접수는 반드시 들어옵니다. 그런데 지금은 처리할 방법이 삭제뿐이고,
+--      삭제하면 중복 판정 근거인 tickets.source_message_id 가 사라져
+--      **다음 스캔에서 같은 메일이 다시 티켓이 됩니다.**
+--      반려는 삭제가 아니라 종료 방식이어야 합니다.
+-- ============================================================================
+
+-- ----------------------------------------------------------------------------
+-- 16.1 on_hold 상태
+--
+-- 보류는 파이프라인의 한 단계가 아니라 **옆길**입니다. 어느 단계에서든 들어갔다
+-- 원래 자리로 돌아옵니다. 그래서 돌아갈 자리를 hold_from_status 에 적어 둡니다 —
+-- 이력에서 계산할 수도 있지만, 보드에서 카드를 끌 때도 필요하므로 컬럼으로 둡니다.
+-- ----------------------------------------------------------------------------
+alter table public.ticket_meta drop constraint if exists ticket_meta_status_check;
+alter table public.ticket_meta add constraint ticket_meta_status_check
+  check (status in ('intake','triage','in_progress','on_hold','testing','deploy','done'));
+
+alter table public.ticket_meta add column if not exists hold_reason      text;
+alter table public.ticket_meta add column if not exists hold_from_status text;
+
+comment on column public.ticket_meta.hold_reason is
+  '무엇을 기다리는지. 사유 없는 보류는 왜 멈췄는지 아무도 모르게 됩니다';
+comment on column public.ticket_meta.hold_from_status is
+  '보류 직전 단계. 보류를 풀 때 돌아갈 자리이고, 보류를 거쳐 단계를 건너뛰는 것을 막습니다';
+
+-- ----------------------------------------------------------------------------
+-- 16.2 종료 방식(resolution)
+--
+-- 상태는 "지금 누가 무엇을 하고 있는가", 종료 방식은 "어떻게 끝났는가" 입니다.
+-- 둘을 한 필드에 담으면 "완료 12건" 이 몇 건을 실제로 고친 것인지 알 수 없습니다.
+--
+-- 기본값을 두지 않습니다. 값이 없으면 '미지정' 이지 'fixed' 가 아닙니다 —
+-- 없는 값을 채우면 통계가 사실이 아니게 됩니다.
+-- ----------------------------------------------------------------------------
+alter table public.ticket_meta add column if not exists resolution text;
+
+alter table public.ticket_meta drop constraint if exists ticket_meta_resolution_check;
+alter table public.ticket_meta add constraint ticket_meta_resolution_check
+  check (resolution is null
+         or resolution in ('fixed','rejected','duplicate','wontfix','cancelled'));
+
+comment on column public.ticket_meta.resolution is
+  'done 일 때만 뜻이 있습니다. rejected/duplicate/cancelled 는 실제 작업이 아니므로 MTTA·MTTR 모수에서 빠집니다';
+
+-- ----------------------------------------------------------------------------
+-- 16.3 상태 이력 트리거 — 보류·종료 방식 뒷정리
+--
+-- 상태를 되돌렸는데 값이 남아 있으면 통계가 조용히 틀립니다.
+--   · done 을 벗어나면 resolution 을 지웁니다 (안 지우면 반려로 계속 빠집니다)
+--   · on_hold 를 벗어나면 hold_reason 을 지웁니다 (안 지우면 지금 보류 중으로 보입니다)
+-- ----------------------------------------------------------------------------
+create or replace function public.log_status_change()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'INSERT' then
+    insert into public.ticket_status_history (ticket_id, from_status, to_status, changed_by)
+    values (new.ticket_id, null, new.status, auth.uid());
+    if new.status = 'done' and new.completed_at is null then
+      new.completed_at := now();
+    end if;
+    return new;
+  end if;
+
+  if new.status is distinct from old.status then
+    insert into public.ticket_status_history (ticket_id, from_status, to_status, changed_by)
+    values (new.ticket_id, old.status, new.status, auth.uid());
+
+    if new.status = 'done' then
+      new.completed_at := coalesce(new.completed_at, now());
+    else
+      -- 완료를 되돌리면 완료 시각도 종료 방식도 지웁니다.
+      new.completed_at := null;
+      new.resolution   := null;
+    end if;
+
+    if new.status = 'on_hold' then
+      -- 돌아갈 자리를 적어 둡니다. 보류에서 보류로는 올 수 없으므로 old.status 가 맞습니다.
+      new.hold_from_status := old.status;
+    elsif old.status = 'on_hold' then
+      new.hold_from_status := null;
+      new.hold_reason      := null;
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 16.4 통계 뷰 — 보류 시간을 빼고 MTTA/MTTR 을 다시 계산합니다
+--
+-- 착수 전 보류는 대기(MTTA)에서, 착수 후 보류는 수리(MTTR)에서 뺍니다.
+-- 리드타임(접수→완료)은 **빼지 않습니다** — 요청자가 실제로 겪은 시간이고,
+-- 그 안에 보류가 있었다는 사실은 hold_hours 로 따로 드러냅니다.
+--
+-- 보류 구간은 이력에서 이어 붙입니다. 아직 보류 중이면 지금까지로 셉니다.
+-- ----------------------------------------------------------------------------
+drop view if exists public.ticket_lead_times;
+
+create view public.ticket_lead_times as
+with first_progress as (
+  select ticket_id, min(changed_at) as started_at
+  from public.ticket_status_history
+  where to_status = 'in_progress'
+  group by ticket_id
+),
+spans as (
+  select
+    h.ticket_id,
+    h.to_status,
+    h.changed_at as span_from,
+    coalesce(
+      lead(h.changed_at) over (partition by h.ticket_id order by h.changed_at),
+      now()
+    ) as span_to
+  from public.ticket_status_history h
+),
+holds as (
+  select
+    s.ticket_id,
+    sum(extract(epoch from (s.span_to - s.span_from))) / 3600.0 as hold_hours,
+    -- 구간은 착수 시각을 걸치지 못합니다. 착수하려면 상태가 바뀌어야 하고,
+    -- 그 순간 보류 구간이 끝나기 때문입니다. 그래서 둘로 정확히 갈립니다.
+    sum(case when f.started_at is null or s.span_to <= f.started_at
+             then extract(epoch from (s.span_to - s.span_from)) else 0 end) / 3600.0
+      as hold_before_hours,
+    sum(case when f.started_at is not null and s.span_from >= f.started_at
+             then extract(epoch from (s.span_to - s.span_from)) else 0 end) / 3600.0
+      as hold_after_hours
+  from spans s
+  left join first_progress f on f.ticket_id = s.ticket_id
+  where s.to_status = 'on_hold'
+  group by s.ticket_id
+)
+select
+  t.id                          as ticket_id,
+  t.subject,
+  t.received_at,
+  t.due_date,
+  t.planned_start_date,
+  t.planned_end_date,
+  m.status,
+  m.work_type,
+  m.severity,
+  m.system_type,
+  m.category,
+  m.assignee_id,
+  m.estimated_days,
+  m.promoted_at,
+  m.completed_at,
+  m.resolution,
+  m.hold_reason,
+  f.started_at,
+  coalesce(hd.hold_hours, 0)    as hold_hours,
+  case when f.started_at is not null
+       then greatest(0, extract(epoch from (f.started_at - t.received_at)) / 3600.0
+                        - coalesce(hd.hold_before_hours, 0))
+  end                           as wait_hours,
+  case when m.completed_at is not null and f.started_at is not null
+       then greatest(0, extract(epoch from (m.completed_at - f.started_at)) / 3600.0
+                        - coalesce(hd.hold_after_hours, 0))
+  end                           as repair_hours,
+  case when m.completed_at is not null
+       then extract(epoch from (m.completed_at - t.received_at)) / 3600.0
+  end                           as lead_time_hours
+from public.tickets t
+join public.ticket_meta m on m.ticket_id = t.id
+left join first_progress f on f.ticket_id = t.id
+left join holds hd on hd.ticket_id = t.id;
+
+alter view public.ticket_lead_times set (security_invoker = on);
+
+-- ----------------------------------------------------------------------------
+-- 16.5 상태 전이를 DB 가 막습니다
+--
+-- 지금까지 인접 단계 규칙은 웹(workflow.ts)에만 있었습니다. RLS 는 **누가**
+-- 고칠 수 있는지(관리자 또는 담당자)만 봤고, **어디로** 옮기는지는 안 봤습니다.
+-- 보류를 넣으면서 그 구멍이 커집니다 — 보류를 한 번 거치는 것만으로 팀원이
+-- 단계를 건너뛸 수 있으면 인접 이동 규칙이 있으나 마나입니다.
+--
+-- auth.uid() 가 null 인 경로(에이전트의 service_role, SQL Editor)와 관리자는
+-- 통과시킵니다. 에이전트는 사람의 실수를 막을 대상이 아니고, 관리자는 오접수
+-- 티켓을 바로 닫을 수 있어야 합니다.
+--
+-- 이 규칙은 web/src/lib/workflow.ts 의 allowedTransitions 와 **같은 내용**입니다.
+-- 한쪽만 고치면 화면에서는 되는데 저장이 실패합니다.
+-- ----------------------------------------------------------------------------
+create or replace function public.guard_status_transition()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  pipeline text[] := array['intake','triage','in_progress','testing','deploy','done'];
+  old_idx  int;
+  new_idx  int;
+begin
+  if new.status is not distinct from old.status then
+    return new;
+  end if;
+  if auth.uid() is null or public.is_admin() then
+    return new;
+  end if;
+
+  -- 보류를 풀 때는 들어갈 때의 자리로만 돌아갑니다.
+  if old.status = 'on_hold' then
+    if old.hold_from_status is null then
+      raise exception '보류를 풀 자리를 알 수 없습니다. 관리자가 옮겨야 합니다';
+    end if;
+    if new.status is distinct from old.hold_from_status then
+      raise exception '보류는 직전 단계(%)로만 풀 수 있습니다', old.hold_from_status;
+    end if;
+    return new;
+  end if;
+
+  -- 보류로 들어가기 — 완료된 건은 기다릴 것이 없습니다.
+  if new.status = 'on_hold' then
+    if old.status = 'done' then
+      raise exception '완료된 건은 보류할 수 없습니다';
+    end if;
+    return new;
+  end if;
+
+  old_idx := array_position(pipeline, old.status);
+  new_idx := array_position(pipeline, new.status);
+  if old_idx is null or new_idx is null or abs(new_idx - old_idx) <> 1 then
+    raise exception '팀원은 인접 단계로만 옮길 수 있습니다 (% → %)', old.status, new.status;
+  end if;
+
+  return new;
+end;
+$$;
+
+-- 이름이 trg_meta_status_update 보다 앞서므로 이력을 남기기 전에 먼저 걸러집니다.
+drop trigger if exists trg_meta_guard_status on public.ticket_meta;
+create trigger trg_meta_guard_status before update on public.ticket_meta
+  for each row execute function public.guard_status_transition();
+
+-- ----------------------------------------------------------------------------
+-- 16.6 보류에는 사유가 있어야 합니다
+--
+-- 사유 없는 보류는 왜 멈췄는지 아무도 모른 채 남습니다. 화면에서도 받고 있지만,
+-- 실제로 막는 것은 여기입니다.
+--
+-- **종료 방식(resolution)에는 같은 제약을 걸지 않습니다.** 이미 완료된 옛 티켓이
+-- 전부 null 이라 제약을 걸면 그 행들이 즉시 위반이 됩니다. 값이 없는 건은
+-- '미지정' 으로 드러내고, 통계에서 'fixed' 로 채우지 않습니다.
+-- ----------------------------------------------------------------------------
+alter table public.ticket_meta drop constraint if exists ticket_meta_hold_reason_check;
+alter table public.ticket_meta add constraint ticket_meta_hold_reason_check
+  check (status <> 'on_hold' or (hold_reason is not null and btrim(hold_reason) <> ''));
