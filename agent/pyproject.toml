@@ -1,6 +1,6 @@
 [project]
 name = "ticket-agent"
-version = "0.3.0"
+version = "0.4.0"
 description = "Outlook 메일을 수집해 티켓으로 적재하고, 완료 티켓의 회신을 발송하는 로컬 에이전트"
 requires-python = ">=3.10"
 dependencies = [

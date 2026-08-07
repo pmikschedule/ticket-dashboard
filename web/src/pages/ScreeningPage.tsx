@@ -11,11 +11,16 @@ import {
   useScanOutcomeCounts,
   useScannedMails,
   useSystemLabels,
+  useSystems,
 } from '../hooks/queries'
 import { rankLinkCandidates } from '../lib/link'
 import {
+  CATEGORIES,
+  CATEGORY_LABELS,
   SCAN_OUTCOMES,
   SCAN_OUTCOME_LABELS,
+  SEVERITIES,
+  SEVERITY_LABELS,
   WORK_TYPES,
   WORK_TYPE_LABELS,
 } from '../lib/constants'
@@ -317,10 +322,22 @@ export default function ScreeningPage() {
                         { onSuccess: () => setSelected(null), onError: fail },
                       )
                     }}
-                    onConvert={(workType) => {
+                    onConvert={(overrides) => {
                       if (!user) return
                       convert.mutate(
-                        { scan: selected, userId: user.id, overrides: { workType } },
+                        {
+                          scan: selected,
+                          userId: user.id,
+                          overrides: {
+                            workType: overrides.workType,
+                            // null 은 '안 골랐다' 입니다. api 가 LLM 값이나
+                            // 기본값으로 채우게 두면 안 고른 것이 판정으로
+                            // 읽히므로, 고른 것만 넘깁니다.
+                            ...(overrides.category ? { category: overrides.category } : {}),
+                            ...(overrides.severity ? { severity: overrides.severity } : {}),
+                            systemType: overrides.systemType,
+                          },
+                        },
                         {
                           onSuccess: () => setSelected(null),
                           onError: fail,
@@ -376,13 +393,17 @@ function ConvertPanel({
   linking,
 }: {
   scan: ScannedMail
-  onConvert: (workType: string) => void
+  onConvert: (overrides: {
+    workType: string
+    category: string | null
+    severity: string | null
+    systemType: string | null
+  }) => void
   onLink: (ticketId: number, note: string) => void
   onConfirmExclusion: () => void
   linking: boolean
 }) {
   const [choice, setChoice] = useState<'new' | 'follow' | 'skip' | null>(null)
-  const [workType, setWorkType] = useState('maintenance')
   const isPending = scan.outcome === 'pending'
 
   const CHOICES = [
@@ -436,34 +457,7 @@ function ConvertPanel({
       </div>
 
       {choice === 'new' && (
-        <div className="space-y-2 rounded-md bg-slate-50 p-3">
-          <div className="flex flex-wrap items-end gap-2">
-            <div className="w-40">
-              <label className="label" htmlFor="convert-work-type">
-                대분류
-              </label>
-              <select
-                id="convert-work-type"
-                className="field"
-                value={workType}
-                onChange={(event) => setWorkType(event.target.value)}
-              >
-                {WORK_TYPES.filter((w) => w !== 'development').map((w) => (
-                  <option key={w} value={w}>
-                    {WORK_TYPE_LABELS[w]}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <button type="button" className="btn-primary" onClick={() => onConvert(workType)}>
-              티켓 생성
-            </button>
-          </div>
-          <p className="text-[11px] text-slate-400">
-            <strong>Triage</strong> 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시 티켓이 되지는
-            않습니다.
-          </p>
-        </div>
+        <NewTicketPanel scan={scan} onConvert={onConvert} />
       )}
 
       {choice === 'follow' && <LinkPanel scan={scan} onLink={onLink} busy={linking} />}
@@ -478,6 +472,138 @@ function ConvertPanel({
           </p>
         </div>
       )}
+    </div>
+  )
+}
+
+/**
+ * 눌러서 고르는 한 줄.
+ *
+ * 드롭다운은 값을 보려면 먼저 열어야 합니다. 고를 것이 네댓 개뿐인데 열고
+ * 훑고 닫는 동작을 항목마다 반복하면, 메일 한 통 처리에 클릭이 열 번 넘게
+ * 듭니다. 여기서는 전부 펼쳐 두고 한 번씩만 누릅니다.
+ */
+function ChipRow<T extends string>({
+  label,
+  options,
+  labels,
+  value,
+  onChange,
+  hint,
+}: {
+  label: string
+  options: readonly T[]
+  labels: Record<T, string>
+  value: T | null
+  onChange: (next: T) => void
+  hint?: (option: T) => string | undefined
+}) {
+  return (
+    <div>
+      <span className="label">{label}</span>
+      <div className="mt-1 flex flex-wrap gap-1">
+        {options.map((option) => {
+          const active = value === option
+          return (
+            <button
+              key={option}
+              type="button"
+              title={hint?.(option)}
+              onClick={() => onChange(option)}
+              className={`rounded-md border px-2.5 py-1 text-xs transition ${
+                active
+                  ? 'border-slate-900 bg-slate-900 font-medium text-white'
+                  : 'border-slate-300 bg-white text-slate-700 hover:border-slate-500'
+              }`}
+            >
+              {labels[option]}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 새 티켓으로 접수하기.
+ *
+ * 예전에는 대분류 드롭다운 하나만 있었고 나머지(중분류·등급·시스템)는 LLM 이
+ * 넣은 값이 그대로 들어갔습니다. 분류에 **실패해서** 여기 온 메일에는 그
+ * 값이 아예 없는데도요 — 결국 등급 medium 짜리 티켓이 만들어지고 담당자가
+ * 상세 화면에서 다시 고쳐야 했습니다.
+ *
+ * 이제 네 가지를 여기서 눌러 정합니다. LLM 이 남긴 값이 있으면 미리 켜 두되
+ * **없으면 비워 둡니다** — 기본값을 찍어 두면 그게 판정으로 읽힙니다.
+ */
+function NewTicketPanel({
+  scan,
+  onConvert,
+}: {
+  scan: ScannedMail
+  onConvert: (overrides: {
+    workType: string
+    category: string | null
+    severity: string | null
+    systemType: string | null
+  }) => void
+}) {
+  const systems = useSystems()
+  const [workType, setWorkType] = useState<string>('maintenance')
+  const [category, setCategory] = useState<string | null>(scan.llm_category)
+  const [severity, setSeverity] = useState<string | null>(scan.llm_severity)
+  const [systemType, setSystemType] = useState<string | null>(scan.llm_system)
+
+  const systemOptions = (systems.data ?? []).map((s) => s.code)
+  const systemLabels = Object.fromEntries(
+    (systems.data ?? []).map((s) => [s.code, s.name]),
+  ) as Record<string, string>
+
+  return (
+    <div className="space-y-3 rounded-md bg-slate-50 p-3">
+      <ChipRow
+        label="대분류"
+        options={WORK_TYPES.filter((w) => w !== 'development')}
+        labels={WORK_TYPE_LABELS}
+        value={workType as (typeof WORK_TYPES)[number]}
+        onChange={(next) => setWorkType(next)}
+      />
+      <ChipRow
+        label="중분류"
+        options={CATEGORIES}
+        labels={CATEGORY_LABELS}
+        value={category as (typeof CATEGORIES)[number] | null}
+        onChange={(next) => setCategory(next)}
+      />
+      <ChipRow
+        label="등급"
+        options={SEVERITIES}
+        labels={SEVERITY_LABELS}
+        value={severity as (typeof SEVERITIES)[number] | null}
+        onChange={(next) => setSeverity(next)}
+      />
+      {systemOptions.length > 0 && (
+        <ChipRow
+          label="시스템"
+          options={systemOptions}
+          labels={systemLabels}
+          value={systemType}
+          onChange={(next) => setSystemType(next)}
+        />
+      )}
+
+      <button
+        type="button"
+        className="btn-primary"
+        onClick={() => onConvert({ workType, category, severity, systemType })}
+      >
+        티켓 생성
+      </button>
+
+      <p className="text-[11px] text-slate-400">
+        <strong>Triage</strong> 상태로 들어갑니다. 안 고른 항목은 비워 둡니다 — 상세 화면에서
+        나중에 정할 수 있습니다. 같은 메일이 다음 스캔에서 다시 티켓이 되지는 않습니다.
+      </p>
     </div>
   )
 }

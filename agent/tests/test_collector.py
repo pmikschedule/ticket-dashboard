@@ -21,7 +21,8 @@ def make_config(**overrides) -> Config:
         mail_backend="fixture",
         outlook_folder="받은 편지함/요청",
         outlook_done_folder="",
-        scan_limit=50,
+        # 0 = 제한 없음. 범위는 시간(window.py)으로 자릅니다.
+        scan_limit=0,
         scan_since=None,
         send_mode="display",
         send_poll_interval=30,
@@ -46,9 +47,11 @@ class FakeMail:
     def __init__(self, mails: list[RawMail]) -> None:
         self.mails = mails
         self.processed: list[tuple[str, str | None]] = []
+        self.fetch_calls: list[dict] = []
         self.closed = False
 
     def fetch(self, folder, limit=50, since=None):
+        self.fetch_calls.append({"folder": folder, "limit": limit, "since": since})
         return self.mails
 
     def mark_processed(self, message_id, move_to=None):
@@ -116,6 +119,9 @@ class FakeStore:
 
     def setting(self, key, default=""):
         return self.settings.get(key, default)
+
+    def set_setting(self, key, value):
+        self.settings[key] = value
 
     def record_scanned_mail(self, mail, classification, ticket_id, outcome=None):
         self.scanned.append(
@@ -244,6 +250,25 @@ class TestCollector:
         collector.run_once()
 
         assert mail.processed == [("m-3", None)]
+
+    def test_first_run_reads_everything_then_records_the_time(self):
+        """첫 기동은 갯수 제한 없이 읽고, 다음을 위해 시각을 남깁니다."""
+        collector, mail, store = build([make_mail("w-1")], {"w-1": request()})
+
+        collector.run_once()
+
+        assert mail.fetch_calls[0]["limit"] is None
+        assert store.settings.get("last_scan_at")
+
+    def test_second_run_only_looks_back_a_few_days(self):
+        """두 번째부터는 최근 며칠치만. 중복을 매번 다시 읽지 않습니다."""
+        collector, mail, store = build([make_mail("w-2")], {"w-2": request()})
+        store.settings["last_scan_at"] = "2026-08-07T00:00:00+00:00"
+
+        collector.run_once()
+
+        since = mail.fetch_calls[0]["since"]
+        assert since is not None  # 폴더 전체가 아니라 잘린 창입니다
 
     def test_pending_mail_attachments_are_kept(self):
         """티켓이 안 돼도 첨부는 보관합니다.

@@ -260,6 +260,20 @@ class TicketStore:
             log.warning("비밀값 '%s' 을 읽지 못했습니다: %s", key, exc)
             return ""
 
+    def set_setting(self, key: str, value: str) -> None:
+        """설정 한 건을 씁니다. 에이전트는 service_role 이라 RLS 를 지납니다.
+
+        실패해도 예외를 던지지 않습니다. 이걸로 죽으면 수집이 멈추는데,
+        못 쓴 결과는 '다음 기동이 첫 기동으로 되돌아가는 것' 이고 그건
+        메일을 더 읽을 뿐 잃지는 않습니다.
+        """
+        try:
+            self._client.table("app_settings").upsert(
+                {"key": key, "value": value}, on_conflict="key"
+            ).execute()
+        except Exception as exc:
+            log.warning("설정 '%s' 을 쓰지 못했습니다: %s", key, exc)
+
     def setting(self, key: str, default: str = "") -> str:
         """app_settings 한 건. 없거나 실패하면 기본값."""
         try:

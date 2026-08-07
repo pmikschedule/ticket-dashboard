@@ -38,15 +38,22 @@ select policyname from pg_policies
 -- scanned_update_member 가 나와야 합니다 (scanned_update_admin 이 아니라)
 ```
 
-### 2. 윈도우 에이전트 소스 교체 (0.3.0)
+### 2. 윈도우 에이전트 소스 교체 (0.4.0)
 
-<https://github.com/pmikschedule/ticket-dashboard/releases/download/agent-v1/ticket-agent-src-0.3.0.zip>
+<https://github.com/pmikschedule/ticket-dashboard/releases/download/agent-v1/ticket-agent-src-0.4.0.zip>
 
-50KB 입니다. 라이브러리는 안 바뀌었으니 **`lib/` 는 건드리지 마세요.**
+54KB 입니다. 라이브러리는 안 바뀌었으니 **`lib/` 는 건드리지 마세요.**
 
 1. 에이전트를 끕니다
 2. zip 을 풀어 나온 `src` 폴더를 `C:\ticket-agent\` 에 덮어쓰기
-3. `python run.py doctor` → 첫 줄이 `에이전트 버전 : 0.3.0`
+3. `.env` 에 아래 두 줄을 더합니다 (없으면 기본값 3일 / 제한 없음)
+
+```
+SCAN_LOOKBACK_DAYS=3
+SCAN_LIMIT=0
+```
+
+4. `python run.py doctor` → 첫 줄이 `에이전트 버전 : 0.4.0`
 
 `.env` 는 그대로 둡니다 (zip 에 든 건 `.env.example` 이라 이름이 달라 안전합니다).
 

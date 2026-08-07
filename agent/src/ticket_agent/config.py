@@ -97,12 +97,19 @@ class Config:
     mail_backend: str
     outlook_folder: str
     outlook_done_folder: str
+    #: 안전장치입니다. 0 이면 제한 없음(기본) — 범위는 시간으로 자릅니다.
+    #: 예전에는 이 값이 창을 정했는데, 중복까지 세는 바람에 수집 창이 조용히
+    #: 좁아졌습니다. 지금은 window.resolve_scan_window() 가 정합니다.
     scan_limit: int
+    #: 첫 기동에서 어디까지 거슬러 올라갈지. 이 선보다 앞은 영영 안 봅니다.
     scan_since: datetime | None
 
     send_mode: str
     send_poll_interval: int
     reply_cc: list[str] = field(default_factory=list)
+
+    #: 첫 기동 이후로는 '지금부터 며칠 전' 까지만 봅니다.
+    scan_lookback_days: int = 3
 
     #: 이 크기 미만의 **이미지** 파일을 첨부에서 뺍니다. 0 이면 끕니다(기본).
     #: Content-ID 없이 서명 이미지를 보내는 클라이언트를 만났을 때만 켭니다.
@@ -147,7 +154,8 @@ def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
         mail_backend=resolve_mail_backend(_optional("AGENT_MAIL_BACKEND", "auto")),
         outlook_folder=_optional("OUTLOOK_FOLDER", "받은 편지함") or "받은 편지함",
         outlook_done_folder=_optional("OUTLOOK_DONE_FOLDER"),
-        scan_limit=_int("SCAN_LIMIT", 50),
+        scan_limit=_int("SCAN_LIMIT", 0),
+        scan_lookback_days=_int("SCAN_LOOKBACK_DAYS", 3),
         attachment_min_image_bytes=_int("ATTACHMENT_MIN_IMAGE_BYTES", 0),
         scan_since=parse_since(_optional("SCAN_SINCE")),
         send_mode=send_mode,

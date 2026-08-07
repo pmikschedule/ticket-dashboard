@@ -6,15 +6,20 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from .classifier import Classifier
 from .config import Config
 from .constants import SCAN_OUTCOME_PENDING
+from .window import parse_last_scan, resolve_scan_window
 from .mail import MailClient
 from .models import RawMail, ScanResult
 from .store import StoreError, TicketStore
 
 log = logging.getLogger(__name__)
+
+#: 마지막 스캔 시각을 담는 app_settings 키. 이 값이 있으면 '첫 기동' 이 아닙니다.
+LAST_SCAN_SETTING = "last_scan_at"
 
 
 class Collector:
@@ -42,11 +47,23 @@ class Collector:
             self._store.setting("intake_ambiguous_policy", "include"),
         )
 
+        # 어디서부터 읽을지. 첫 기동은 SCAN_SINCE 부터 전부, 그다음부터는
+        # 최근 며칠치만 봅니다. 근거는 window.py 에 적었습니다.
+        started_at = datetime.now(timezone.utc)
+        window = resolve_scan_window(
+            last_scan_at=parse_last_scan(self._store.setting(LAST_SCAN_SETTING)),
+            scan_since=self._config.scan_since,
+            lookback_days=self._config.scan_lookback_days,
+            now=started_at,
+            configured_limit=self._config.scan_limit,
+        )
+        log.info("수집 범위: %s", window.describe())
+
         mails = list(
             self._mail.fetch(
                 folder=self._config.outlook_folder,
-                limit=self._config.scan_limit,
-                since=self._config.scan_since,
+                limit=window.limit,
+                since=window.since,
             )
         )
         log.info("'%s' 에서 메일 %d건을 읽었습니다.", self._config.outlook_folder, len(mails))
@@ -72,6 +89,11 @@ class Collector:
                 pending += 1
             else:
                 created += 1
+
+        # 스캔을 **시작한** 시각을 남깁니다. 끝난 시각을 쓰면 도는 동안 도착한
+        # 메일이 다음 창에서도 빠집니다. 되돌아 읽는 폭은 넉넉한 편이 낫습니다 —
+        # 겹쳐 읽은 메일은 중복으로 걸러지지만 못 읽은 메일은 아무도 모릅니다.
+        self._store.set_setting(LAST_SCAN_SETTING, started_at.isoformat())
 
         return ScanResult(
             scanned=scanned,
