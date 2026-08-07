@@ -84,8 +84,10 @@ class FakeStore:
         self.existing = existing or {}
         self.created: list[tuple[RawMail, Classification]] = []
         self.uploads: list[tuple[int, Attachment]] = []
+        self.scan_uploads: list[tuple[int, Attachment]] = []
         self.next_id = 100
         self.fail_on_create = False
+        self.scan_record_fails = False
         self.systems_registry: list = []
         self.scanned: list = []
         self.rules: tuple = ([], [])
@@ -124,6 +126,14 @@ class FakeStore:
                 outcome or ("ticketed" if ticket_id else "excluded"),
             )
         )
+        # 실제 store 는 만들어진 행의 id 를 돌려줍니다. 첨부를 여기 매답니다.
+        if self.scan_record_fails:
+            return None
+        return len(self.scanned)
+
+    def upload_scan_attachment(self, scan_id, attachment):
+        self.scan_uploads.append((scan_id, attachment))
+        return f"scan/{scan_id}/{attachment.file_name}"
 
 
 def request(**overrides) -> Classification:
@@ -234,6 +244,50 @@ class TestCollector:
         collector.run_once()
 
         assert mail.processed == [("m-3", None)]
+
+    def test_pending_mail_attachments_are_kept(self):
+        """티켓이 안 돼도 첨부는 보관합니다.
+
+        후속 메일에 붙은 화면 캡처가 정작 그 메일을 보낸 이유인 경우가 많습니다.
+        예전에는 티켓이 될 때만 올려서 그게 유실됐습니다.
+        """
+        failed = request(error="API 오류: timeout", confidence=None)
+        mail_with_file = make_mail("m-p1", attachments=[Attachment("screen.png", b"\x89PNG")])
+        collector, _, store = build([mail_with_file], {"m-p1": failed})
+
+        collector.run_once()
+
+        assert [a.file_name for _, a in store.scan_uploads] == ["screen.png"]
+        assert store.uploads == []  # 티켓 첨부로는 안 올립니다
+
+    def test_excluded_mail_attachments_are_kept(self):
+        """제외된 메일도 마찬가지입니다. 오판이면 되살릴 때 파일이 필요합니다."""
+        mail_with_file = make_mail("m-p2", attachments=[Attachment("명세.xlsx", b"x")])
+        collector, _, store = build([mail_with_file], {"m-p2": not_request()})
+
+        collector.run_once()
+
+        assert [a.file_name for _, a in store.scan_uploads] == ["명세.xlsx"]
+
+    def test_attachments_are_skipped_when_scan_record_failed(self):
+        """붙일 곳이 없으면 올리지 않습니다 — 아무도 못 찾는 쓰레기가 됩니다."""
+        mail_with_file = make_mail("m-p3", attachments=[Attachment("a.png", b"x")])
+        collector, _, store = build([mail_with_file], {"m-p3": not_request()})
+        store.scan_record_fails = True
+
+        collector.run_once()
+
+        assert store.scan_uploads == []
+
+    def test_ticketed_mail_does_not_double_store_attachments(self):
+        """티켓이 된 메일은 티켓 첨부로만 올립니다. 두 번 올리면 Storage 가 두 배입니다."""
+        mail_with_file = make_mail("m-p4", attachments=[Attachment("log.txt", b"x")])
+        collector, _, store = build([mail_with_file], {"m-p4": request()})
+
+        collector.run_once()
+
+        assert [a.file_name for _, a in store.uploads] == ["log.txt"]
+        assert store.scan_uploads == []
 
     def test_attachments_are_uploaded(self):
         mail_with_file = make_mail(

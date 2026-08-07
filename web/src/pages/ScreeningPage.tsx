@@ -34,7 +34,10 @@ import type { ScannedMail } from '../lib/types'
  * '제외됨' 은 LLM 이 판단을 끝낸 건이라 급하지 않습니다.
  */
 export default function ScreeningPage() {
-  const { user, isAdmin } = useAuth()
+  // 스크리닝 판단(접수·연결·제외)은 팀원 누구나 합니다. 관리자 한 명을 거치면
+  // "빨리 판단한다" 는 목적이 무너집니다. 실제 차단은 schema.sql 22장의
+  // scanned_update_member 정책이고, 여기서 숨기는 것은 편의일 뿐입니다.
+  const { user } = useAuth()
   const systemLabel = useSystemLabels()
 
   const [outcome, setOutcome] = useState<string>('pending')
@@ -301,10 +304,8 @@ export default function ScreeningPage() {
                     </Link>
                     {selected.outcome === 'linked' ? ' 에 붙었습니다.' : ' 으로 등록됐습니다.'}
                   </p>
-                ) : !isAdmin ? (
-                  <p className="text-xs text-slate-500">
-                    티켓 전환과 검토 확정은 관리자만 할 수 있습니다.
-                  </p>
+                ) : !user ? (
+                  <p className="text-xs text-slate-500">로그인이 필요합니다.</p>
                 ) : (
                   <ConvertPanel
                     scan={selected}
@@ -592,9 +593,8 @@ function LinkPanel({
       </button>
 
       <p className="text-[11px] text-slate-400">
-        메일 제목·발신자·수신일시와 본문이 코멘트로 들어갑니다. 티켓은 새로 만들지 않습니다.
-        <strong> 메일에 붙어 있던 파일은 함께 옮겨지지 않습니다</strong> — 필요하면 티켓 상세에서
-        직접 올리세요.
+        메일 제목·발신자·수신일시와 본문이 코멘트로 들어가고, 메일에 붙어 있던 파일도 그 티켓의
+        첨부로 함께 옮겨집니다. 티켓은 새로 만들지 않습니다.
       </p>
     </div>
   )

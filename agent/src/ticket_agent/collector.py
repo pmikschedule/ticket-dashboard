@@ -99,9 +99,10 @@ class Collector:
                 mail.subject,
                 classification.error,
             )
-            self._store.record_scanned_mail(
+            scan_id = self._store.record_scanned_mail(
                 mail, classification, None, outcome=SCAN_OUTCOME_PENDING
             )
+            self._keep_attachments(scan_id, mail)
             self._mark_done(mail)
             return "pending"
 
@@ -113,7 +114,8 @@ class Collector:
             )
             # 티켓은 안 만들지만 **기록은 남깁니다.** 이게 없으면 LLM 오판을
             # 아무도 알 수 없습니다. 검토 화면에서 사람이 구제할 수 있습니다.
-            self._store.record_scanned_mail(mail, classification, None)
+            scan_id = self._store.record_scanned_mail(mail, classification, None)
+            self._keep_attachments(scan_id, mail)
             self._mark_done(mail)
             return "not_request"
 
@@ -141,6 +143,27 @@ class Collector:
 
         self._mark_done(mail)
         return "created"
+
+    def _keep_attachments(self, scan_id: int | None, mail: RawMail) -> None:
+        """티켓이 안 된 메일의 첨부를 보관합니다.
+
+        후속 메일에 붙은 화면 캡처가 정작 그 메일을 보낸 이유인 경우가 많은데,
+        예전에는 티켓이 될 때만 올려서 그게 유실됐습니다.
+
+        스캔 기록이 없으면(적재 실패) 건너뜁니다 — 붙일 곳이 없는 파일을
+        Storage 에 남기면 아무도 못 찾는 쓰레기가 됩니다.
+        """
+        if scan_id is None:
+            if mail.attachments:
+                log.warning(
+                    "스캔 기록이 없어 첨부 %d개를 보관하지 못했습니다: %s",
+                    len(mail.attachments),
+                    mail.message_id,
+                )
+            return
+
+        for attachment in mail.attachments:
+            self._store.upload_scan_attachment(scan_id, attachment)
 
     def _mark_done(self, mail: RawMail) -> None:
         """적재에 성공한 뒤에만 부릅니다. 표시가 실패해도 티켓은 이미 살아 있습니다."""

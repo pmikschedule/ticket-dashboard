@@ -1512,3 +1512,82 @@ comment on column public.scanned_mails.ticket_id is
 -- 여기서 막히면 연결이 안 됩니다. (기존 comments 정책과 같은 내용을 재확인)
 create index if not exists idx_scanned_linked
   on public.scanned_mails (ticket_id) where (outcome = 'linked');
+
+-- ============================================================================
+-- 22. 스캔한 모든 메일의 첨부를 보관하고, 스크리닝을 팀원에게 엽니다
+-- ============================================================================
+-- (가) 첨부 ------------------------------------------------------------------
+-- 지금까지 첨부는 **티켓이 될 때만** 올라갔습니다. 그래서 후속 메일에 붙은
+-- 화면 캡처가 스크리닝에서 티켓에 연결될 때 유실됐습니다 — 정작 그 캡처가
+-- 후속 메일을 보낸 이유인 경우가 많습니다.
+--
+-- 티켓이 없는 메일의 첨부를 attachments 에 넣을 수는 없습니다(ticket_id 필수).
+-- 그래서 스캔에 매달리는 표를 따로 둡니다. 나중에 티켓이 되거나 티켓에
+-- 붙을 때 attachments 로 **행만** 복사합니다. 파일은 이미 Storage 에 있으므로
+-- 다시 올리지 않습니다 — 같은 경로를 가리킵니다.
+--
+-- 대가는 Storage 입니다. 요청이 아니라고 걸러진 메일의 첨부도 쌓입니다.
+-- 그 편이 낫다고 판단한 근거는 '판단 대기' 와 같습니다 — 잘못 보관한 파일은
+-- 지우면 되지만 잘못 버린 파일은 요청자가 다시 보내 줘야 압니다.
+-- ----------------------------------------------------------------------------
+create table if not exists public.scan_attachments (
+  id           bigserial primary key,
+  scan_id      bigint not null references public.scanned_mails(id) on delete cascade,
+  file_name    text not null,
+  file_url     text not null,          -- Storage 경로. 예: scan/128/1699-error.png
+  content_type text,
+  size_bytes   bigint,
+  created_at   timestamptz not null default now()
+);
+
+create index if not exists idx_scan_attachments_scan
+  on public.scan_attachments (scan_id);
+
+comment on table public.scan_attachments is
+  '티켓이 되지 않은 메일의 첨부. 티켓에 연결될 때 attachments 로 행만 복사합니다';
+
+alter table public.scan_attachments enable row level security;
+
+drop policy if exists scan_att_read   on public.scan_attachments;
+drop policy if exists scan_att_write  on public.scan_attachments;
+drop policy if exists scan_att_delete on public.scan_attachments;
+
+-- 적재는 에이전트(service_role)가 합니다. 웹은 읽기만 하면 됩니다.
+create policy scan_att_read on public.scan_attachments
+  for select using (public.is_member());
+create policy scan_att_delete on public.scan_attachments
+  for delete using (public.is_admin());
+
+-- (나) 스크리닝 권한 ---------------------------------------------------------
+-- 스크리닝은 관리자만 할 수 있었습니다. 관리자가 한 명뿐인 팀에서는 후속 메일
+-- 연결이 그 한 사람을 거쳐야 하고, "빨리 판단한다" 는 목적과 정면으로 부딪힙니다.
+--
+-- 여는 범위를 좁혀 둡니다. 판단(접수·연결·제외)은 팀원 누구나 하지만
+-- **지우는 것은 여전히 관리자만** 입니다. 판단은 화면에서 되돌릴 수 있고
+-- 삭제는 안 됩니다.
+-- ----------------------------------------------------------------------------
+drop policy if exists scanned_update_admin  on public.scanned_mails;
+drop policy if exists scanned_update_member on public.scanned_mails;
+
+create policy scanned_update_member on public.scanned_mails
+  for update using (public.is_member()) with check (public.is_member());
+
+-- 스크리닝에서 티켓을 만들려면 tickets insert 와 attachments insert 가 필요합니다.
+-- 둘 다 관리자 전용이었습니다. 판단을 팀원에게 열었으므로 함께 엽니다 —
+-- 한쪽만 열면 버튼은 눌리는데 저장에서 막힙니다.
+drop policy if exists tickets_insert_admin  on public.tickets;
+drop policy if exists tickets_insert_member on public.tickets;
+create policy tickets_insert_member on public.tickets
+  for insert with check (public.is_member());
+
+drop policy if exists att_insert_admin  on public.attachments;
+drop policy if exists att_insert_member on public.attachments;
+create policy att_insert_member on public.attachments
+  for insert with check (public.is_member());
+
+-- ticket_meta 도 같이 봅니다. 티켓만 만들어지고 meta 가 막히면 상태 없는
+-- 티켓이 남고, 그건 보드에서 손댈 수 없습니다.
+drop policy if exists meta_insert_admin  on public.ticket_meta;
+drop policy if exists meta_insert_member on public.ticket_meta;
+create policy meta_insert_member on public.ticket_meta
+  for insert with check (public.is_member());

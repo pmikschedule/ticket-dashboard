@@ -575,6 +575,42 @@ export async function countPendingScans(): Promise<number> {
 }
 
 /**
+ * 스캔에 매달려 있던 첨부를 티켓 첨부로 옮깁니다.
+ *
+ * **파일은 다시 올리지 않습니다.** 이미 Storage 에 있으므로 `attachments` 행이
+ * 같은 경로를 가리키게만 합니다. 다시 올리면 같은 파일이 두 벌이 됩니다.
+ *
+ * 실패해도 예외를 던지지 않습니다 — 코멘트는 이미 붙었고, 첨부가 없다고
+ * 연결 자체를 되돌리면 더 큰 것을 잃습니다. 대신 사유를 돌려줍니다.
+ */
+export async function adoptScanAttachments(
+  scanId: number,
+  ticketId: number,
+): Promise<{ moved: number; error: string | null }> {
+  const { data, error: readError } = await supabase
+    .from('scan_attachments')
+    .select('file_name, file_url, content_type, size_bytes')
+    .eq('scan_id', scanId)
+
+  if (readError) return { moved: 0, error: readError.message }
+
+  const rows = (data ?? []) as {
+    file_name: string
+    file_url: string
+    content_type: string | null
+    size_bytes: number | null
+  }[]
+  if (rows.length === 0) return { moved: 0, error: null }
+
+  const { error: insertError } = await supabase
+    .from('attachments')
+    .insert(rows.map((row) => ({ ...row, ticket_id: ticketId })))
+
+  if (insertError) return { moved: 0, error: insertError.message }
+  return { moved: rows.length, error: null }
+}
+
+/**
  * 후속 메일을 붙일 티켓 후보.
  *
  * 검색어가 없으면 최근 티켓을 그냥 보여 줍니다 — 빈 화면에서 시작하면 무엇을
@@ -618,6 +654,7 @@ export async function linkScanToTicket(
   note = '',
 ): Promise<void> {
   await addComment(ticketId, userId, buildMailComment(scan, note))
+  await adoptScanAttachments(scan.id, ticketId)
 
   const { error } = await supabase
     .from('scanned_mails')
@@ -719,6 +756,10 @@ export async function convertScanToTicket(
     })
     .eq('id', scan.id)
   if (scanError) throw new Error(scanError.message)
+
+  // 이 메일에 붙어 있던 파일도 새 티켓으로 옮깁니다. 실패해도 티켓은 살립니다 —
+  // 첨부 때문에 되살린 티켓을 도로 무르면 더 큰 것을 잃습니다.
+  await adoptScanAttachments(scan.id, ticket.id)
 
   return ticket.id
 }

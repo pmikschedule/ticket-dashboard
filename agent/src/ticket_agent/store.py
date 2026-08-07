@@ -283,8 +283,12 @@ class TicketStore:
         classification: Classification | None,
         ticket_id: int | None,
         outcome: str | None = None,
-    ) -> None:
+    ) -> int | None:
         """스캔한 메일을 전부 남깁니다 — 티켓이 안 된 것도.
+
+        만들어진(또는 갱신된) 행의 id 를 돌려줍니다. 첨부를 그 id 에 매달아야
+        하기 때문입니다. 적재에 실패하면 None 이고, 그러면 첨부도 건너뜁니다 —
+        붙일 곳이 없는 파일을 Storage 에 남기면 아무도 못 찾는 쓰레기가 됩니다.
 
         이게 없으면 LLM 이 잘못 걸러낸 메일은 어디에도 흔적이 남지 않아
         아무도 오판을 알 수 없습니다. 실패해도 수집을 멈추지는 않습니다.
@@ -321,11 +325,58 @@ class TicketStore:
             )
 
         try:
-            self._client.table("scanned_mails").upsert(
-                payload, on_conflict="message_id"
-            ).execute()
+            response = (
+                self._client.table("scanned_mails")
+                .upsert(payload, on_conflict="message_id")
+                .execute()
+            )
+            rows = response.data or []
+            return rows[0].get("id") if rows else None
         except Exception as exc:
             log.warning("스캔 기록 적재 실패 (%s): %s", mail.message_id, exc)
+            return None
+
+    def upload_scan_attachment(self, scan_id: int, attachment: Attachment) -> str | None:
+        """티켓이 되지 않은 메일의 첨부를 보관합니다.
+
+        경로 앞에 'scan/' 을 붙여 티켓 첨부와 섞이지 않게 합니다. 나중에 이
+        메일이 티켓이 되거나 티켓에 붙으면 웹이 `attachments` 로 **행만**
+        복사합니다 — 파일은 이미 여기 있으므로 다시 올리지 않습니다.
+        """
+        safe_name = sanitize_filename(attachment.file_name)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
+        path = f"scan/{scan_id}/{stamp}-{safe_name}"
+        content_type = (
+            attachment.content_type
+            or mimetypes.guess_type(safe_name)[0]
+            or "application/octet-stream"
+        )
+
+        try:
+            self._client.storage.from_(self._bucket).upload(
+                path,
+                attachment.content,
+                {"content-type": content_type, "upsert": "false"},
+            )
+        except Exception as exc:
+            log.warning("스캔 첨부 '%s' 업로드 실패 (스캔 %s): %s", safe_name, scan_id, exc)
+            return None
+
+        try:
+            self._client.table("scan_attachments").insert(
+                {
+                    "scan_id": scan_id,
+                    "file_name": safe_name,
+                    "file_url": path,
+                    "content_type": content_type,
+                    "size_bytes": attachment.size_bytes,
+                }
+            ).execute()
+        except Exception as exc:
+            log.warning("스캔 첨부 기록 실패 (스캔 %s): %s", scan_id, exc)
+            return None
+
+        return path
 
     def get_ticket(self, ticket_id: int) -> dict[str, Any] | None:
         response = (
