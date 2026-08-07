@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -43,7 +44,20 @@ def main() -> int:
             f" 라이브러리가 없습니다.\n"
             f"      꾸러미에 담긴 버전: {', '.join(available) or '(없음)'}\n"
             f"      지금 실행 중인 파이썬: {sys.executable}\n"
-            f"      다른 파이썬으로 실행하거나, 해당 버전 꾸러미를 요청하세요."
+            f"      컴파일된 확장 모듈은 버전을 바꿔 쓸 수 없습니다. 이 PC 에 다른\n"
+            f"      파이썬이 있으면 그것으로 실행하고 (예: py -3.12 run.py doctor),\n"
+            f"      없으면 담당자에게 이 버전이 담긴 꾸러미를 요청하세요."
+        )
+
+    # free-threaded 빌드(3.13+ 의 선택 설치)는 버전 번호가 같아서 폴더는 찾지만
+    # ABI 가 달라 cp3XX 휠을 못 씁니다. 여기서 막지 않으면 한참 뒤에 알아보기
+    # 힘든 ImportError 나 DLL 오류로 죽습니다.
+    if sysconfig.get_config_var("Py_GIL_DISABLED"):
+        return fail(
+            f"free-threaded 파이썬({sys.version_info.major}.{sys.version_info.minor}t)"
+            f" 은 이 꾸러미로 돌릴 수 없습니다.\n"
+            f"      지금 실행 중인 파이썬: {sys.executable}\n"
+            f"      GIL 이 있는 일반 빌드로 실행하세요 (예: py -3.12 run.py doctor)."
         )
 
     # 순서가 중요합니다. 버전 전용이 공용보다 앞에 와야 하고,

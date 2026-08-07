@@ -19,10 +19,14 @@
       .env.example
       src/ticket_agent/   소스
       lib/common/         순수 파이썬 라이브러리 (버전 무관, 한 벌)
-      lib/cp310..cp313/   컴파일된 라이브러리 (파이썬 버전별)
+      lib/cp310..cp314/   컴파일된 라이브러리 (파이썬 버전별)
 
-파이썬 버전을 미리 물어보지 않아도 되도록 3.10~3.13 을 전부 담습니다.
+파이썬 버전을 미리 물어보지 않아도 되도록 3.10~3.14 를 전부 담습니다.
 `run.py` 가 실행 중인 인터프리터에 맞는 폴더를 골라 씁니다.
+
+**새 파이썬이 나오면 `PY_VERSIONS` 에 추가하고 다시 만듭니다.** 목록에 없는
+버전으로 실행하면 `run.py` 가 거부합니다 — 컴파일된 확장 모듈(pydantic_core,
+pywin32 등)은 ABI 가 버전마다 달라서 대신 쓸 수 있는 것이 없기 때문입니다.
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ AGENT = Path(__file__).resolve().parent.parent
 OUT = AGENT / "dist-offline"
 BUNDLE = OUT / "ticket-agent-offline"
 
-PY_VERSIONS = ["3.10", "3.11", "3.12", "3.13"]
+PY_VERSIONS = ["3.10", "3.11", "3.12", "3.13", "3.14"]
 
 # pyproject.toml 과 같은 목록입니다. 여기만 고치면 어긋나므로 함께 고치세요.
 REQUIREMENTS = [
