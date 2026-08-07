@@ -198,12 +198,28 @@ export async function updateTicketMeta(
   if (error) throw new Error(error.message)
 }
 
-/** 관리자 수동 내용 보완 (기획서 3.2). */
+/**
+ * 담당자·관리자의 내용 보완 (기획서 3.2).
+ *
+ * 메일에서 온 티켓은 제목이 메일 제목 그대로라 대개 손을 봐야 합니다
+ * ("RE: RE: 문의드립니다" 가 티켓 제목일 수는 없습니다). 요청자도 마찬가지로
+ * 대리 발송이면 실제 요청자가 다릅니다.
+ *
+ * **원본 메일은 이 함수로 바뀌지 않습니다.** `scanned_mails` 에 스냅숏이
+ * 그대로 남아 증적이 됩니다 (`fetchOriginalMail`). 그래서 여기서 마음 놓고
+ * 고칠 수 있습니다 — 원본이 안 남으면 고치는 것 자체가 위험한 일이 됩니다.
+ *
+ * `received_at`(접수일)과 `source_message_id`(중복 판정 키)는 일부러 뺐습니다.
+ * 접수일은 판단이 아니라 사실이고 리드타임의 기준이며, message_id 를 바꾸면
+ * 같은 메일이 다시 티켓이 됩니다. 후자는 DB 트리거도 함께 막습니다.
+ */
 export async function updateTicketFields(
   ticketId: number,
   patch: {
     subject?: string
     description?: string
+    reporter_name?: string | null
+    reporter_email?: string
     due_date?: string | null
     planned_start_date?: string | null
     planned_end_date?: string | null
@@ -211,6 +227,24 @@ export async function updateTicketFields(
 ): Promise<void> {
   const { error } = await supabase.from('tickets').update(patch).eq('id', ticketId)
   if (error) throw new Error(error.message)
+}
+
+/**
+ * 티켓의 근거가 된 원본 메일. 없으면 null (수동 등록·직접 생성 티켓).
+ *
+ * 티켓 본문은 담당자가 고칠 수 있지만 이건 못 고칩니다 — 에이전트가 적재한
+ * 그대로입니다. 무엇을 받아서 무엇으로 정리했는지 대조할 수 있어야
+ * 나중에 "요청한 적 없다" 는 말이 나왔을 때 근거가 됩니다.
+ */
+export async function fetchOriginalMail(ticketId: number): Promise<ScannedMail | null> {
+  const { data, error } = await supabase
+    .from('scanned_mails')
+    .select('*')
+    .eq('ticket_id', ticketId)
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data as ScannedMail) ?? null
 }
 
 export async function deleteTicket(ticketId: number): Promise<void> {

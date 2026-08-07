@@ -34,6 +34,15 @@ export function useComments(id: number) {
   return useQuery({ queryKey: keys.comments(id), queryFn: () => api.fetchComments(id), enabled: id > 0 })
 }
 
+/** 티켓의 근거가 된 원본 메일 (증적). 수동 등록 티켓이면 null 입니다. */
+export function useOriginalMail(id: number) {
+  return useQuery({
+    queryKey: ['original-mail', id],
+    queryFn: () => api.fetchOriginalMail(id),
+    enabled: id > 0,
+  })
+}
+
 export function useAttachments(id: number) {
   return useQuery({
     queryKey: keys.attachments(id),
@@ -333,13 +342,9 @@ export function useUpdateTicketFields() {
       patch,
     }: {
       ticketId: number
-      patch: {
-        subject?: string
-        description?: string
-        due_date?: string | null
-        planned_start_date?: string | null
-        planned_end_date?: string | null
-      }
+      // api.updateTicketFields 의 인자 그대로. 두 곳에 같은 목록을 적어 두면
+      // 필드를 늘릴 때마다 한쪽만 고치게 됩니다.
+      patch: Parameters<typeof api.updateTicketFields>[1]
     }) => api.updateTicketFields(ticketId, patch),
     onSuccess: (_data, variables) => invalidateTicket(queryClient, variables.ticketId),
   })

@@ -1439,3 +1439,44 @@ alter table public.tickets add column if not exists skipped_inline_attachments t
 
 comment on column public.tickets.skipped_inline_attachments is
   '본문에 딸려 있어 첨부에서 제외한 파일 이름들. 내용은 저장하지 않습니다';
+
+-- ============================================================================
+-- 20. 티켓을 고칠 수 있게 되면서 못 고치게 막아야 하는 것
+-- ============================================================================
+-- 담당자가 제목·요청자·내용을 고칠 수 있습니다 (can_edit_ticket). 메일 제목이
+-- 곧 티켓 제목일 수는 없으니 당연히 필요한 일인데, 그러면 "무엇을 받았는가" 와
+-- "무엇으로 정리했는가" 가 갈라집니다.
+--
+-- 받은 것은 scanned_mails 스냅숏에 남아 증적이 됩니다. 그 둘을 잇는 끈이
+-- source_message_id 이고, 이건 동시에 **중복 판정 키**입니다.
+-- 바꾸면 두 가지가 한꺼번에 깨집니다.
+--
+--   · 증적 연결이 끊겨 원본 메일을 못 찾습니다
+--   · 같은 메일이 다음 스캔에서 새 티켓이 됩니다
+--
+-- 화면은 이 값을 보내지 않지만, 화면이 안 보낸다는 것은 근거가 아닙니다.
+-- 권한은 화면이 아니라 DB 가 막습니다.
+--
+-- 에이전트(service_role)와 SQL Editor 는 auth.uid() 가 null 이라 통과시킵니다 —
+-- 데이터 정정이 필요할 때 막아 두면 손댈 방법이 없어집니다.
+-- ----------------------------------------------------------------------------
+create or replace function public.guard_source_message_id()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+  if new.source_message_id is distinct from old.source_message_id then
+    raise exception '원본 메일 연결(source_message_id)은 바꿀 수 없습니다';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_tickets_guard_source on public.tickets;
+create trigger trg_tickets_guard_source before update on public.tickets
+  for each row execute function public.guard_source_message_id();

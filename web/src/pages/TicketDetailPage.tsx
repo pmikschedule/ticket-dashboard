@@ -18,6 +18,7 @@ import {
   useComments,
   useDeleteComment,
   useDeleteTicket,
+  useOriginalMail,
   useStatusHistory,
   useTicket,
   useUpdateMeta,
@@ -69,6 +70,7 @@ export default function TicketDetailPage() {
   const { data: systems = [] } = useSystems()
   const systemLabel = useSystemLabels()
   const { data: comments = [] } = useComments(ticketId)
+  const { data: originalMail } = useOriginalMail(ticketId)
   const { data: attachments = [] } = useAttachments(ticketId)
   const { data: history = [] } = useStatusHistory(ticketId)
 
@@ -85,6 +87,11 @@ export default function TicketDetailPage() {
   const [draftSubject, setDraftSubject] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [draftDue, setDraftDue] = useState('')
+  const [draftReporterName, setDraftReporterName] = useState('')
+  const [draftReporterEmail, setDraftReporterEmail] = useState('')
+  // 기본은 접힘. 평소에 볼 것은 정리된 티켓이고, 원본은 대조가 필요할 때만
+  // 펼칩니다. 처음부터 펼쳐 두면 긴 메일 원문이 화면을 다 차지합니다.
+  const [showOriginal, setShowOriginal] = useState(false)
   // 보류·완료는 값을 하나 더 받아야 해서 버튼 한 번으로 끝내지 않습니다.
   const [pendingStatus, setPendingStatus] = useState<Status | null>(null)
   const [holdReason, setHoldReason] = useState('')
@@ -120,6 +127,8 @@ export default function TicketDetailPage() {
     setDraftSubject(ticket.subject)
     setDraftDescription(ticket.description)
     setDraftDue(ticket.due_date ?? '')
+    setDraftReporterName(ticket.reporter_name ?? '')
+    setDraftReporterEmail(ticket.reporter_email)
     setEditing(true)
   }
 
@@ -173,18 +182,53 @@ export default function TicketDetailPage() {
                     onChange={(event) => setDraftSubject(event.target.value)}
                   />
                 </div>
-                <div>
-                  <label className="label" htmlFor="edit-due">
-                    요청 기한
-                  </label>
-                  <input
-                    id="edit-due"
-                    type="date"
-                    className="field"
-                    value={draftDue}
-                    onChange={(event) => setDraftDue(event.target.value)}
-                  />
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="label" htmlFor="edit-reporter-name">
+                      요청자
+                    </label>
+                    <input
+                      id="edit-reporter-name"
+                      className="field"
+                      placeholder="예: 홍길동 과장"
+                      value={draftReporterName}
+                      onChange={(event) => setDraftReporterName(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="edit-reporter-email">
+                      요청자 메일
+                    </label>
+                    <input
+                      id="edit-reporter-email"
+                      type="email"
+                      className="field"
+                      value={draftReporterEmail}
+                      onChange={(event) => setDraftReporterEmail(event.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <label className="label" htmlFor="edit-due">
+                      요청 기한
+                    </label>
+                    <input
+                      id="edit-due"
+                      type="date"
+                      className="field"
+                      value={draftDue}
+                      onChange={(event) => setDraftDue(event.target.value)}
+                    />
+                  </div>
                 </div>
+                {/*
+                  완료 회신이 여기 적힌 주소로 갑니다. 대리 발송을 실제 요청자로
+                  고치는 것이 이 칸의 쓸모인데, 잘못 고치면 엉뚱한 사람에게
+                  메일이 나갑니다. 되돌릴 수 없으므로 미리 말해 둡니다.
+                */}
+                <p className="text-[11px] text-slate-400">
+                  완료 회신은 위 <strong>요청자 메일</strong> 주소로 발송됩니다. 원본 메일의
+                  발신자는 아래 '원본 메일' 칸에 그대로 남습니다.
+                </p>
                 <div>
                   <label className="label" htmlFor="edit-description">
                     내용
@@ -208,6 +252,11 @@ export default function TicketDetailPage() {
                             subject: draftSubject.trim() || ticket.subject,
                             description: draftDescription,
                             due_date: draftDue || null,
+                            reporter_name: draftReporterName.trim() || null,
+                            // 빈 값으로 저장하면 회신할 곳이 없어집니다.
+                            // 안 적었으면 고치지 않은 것으로 봅니다.
+                            reporter_email:
+                              draftReporterEmail.trim() || ticket.reporter_email,
                           },
                         },
                         { onSuccess: () => setEditing(false), onError: fail },
@@ -255,13 +304,85 @@ export default function TicketDetailPage() {
                   </div>
                 </dl>
 
-                <h2 className="mt-5 text-xs font-semibold text-slate-600">원본 메일 내용</h2>
+                <h2 className="mt-5 text-xs font-semibold text-slate-600">내용</h2>
                 <pre className="mt-1 max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-sans text-sm leading-relaxed text-slate-800">
                   {ticket.description || '(본문 없음)'}
                 </pre>
               </>
             )}
           </section>
+
+          {/*
+            증적. 담당자가 제목·요청자·내용을 고칠 수 있게 되면서 "무엇을 받았는가"
+            와 "무엇으로 정리했는가" 가 갈라졌습니다. 원본이 안 남으면 나중에
+            "그렇게 요청한 적 없다" 는 말이 나왔을 때 댈 근거가 없습니다.
+
+            이 칸은 에이전트가 적재한 scanned_mails 스냅숏이고 화면에서 못 고칩니다
+            (RLS 상 update 는 관리자만, 그나마 검토 표시용입니다).
+          */}
+          {originalMail && (
+            <section className="card p-5">
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 text-left"
+                onClick={() => setShowOriginal((open) => !open)}
+              >
+                <h2 className="text-sm font-semibold text-slate-800">원본 메일 (증적)</h2>
+                <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                  수정 불가
+                </span>
+                <span className="ml-auto text-xs text-slate-400">
+                  {showOriginal ? '접기' : '펼치기'}
+                </span>
+              </button>
+
+              {showOriginal && (
+                <div className="mt-3 space-y-3">
+                  <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">
+                    <div>
+                      <dt className="text-slate-500">발신자</dt>
+                      <dd className="truncate text-slate-800" title={originalMail.sender_email}>
+                        {originalMail.sender_name || originalMail.sender_email}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">수신일시</dt>
+                      <dd className="text-slate-800">
+                        {formatDateTime(originalMail.received_at)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">폴더</dt>
+                      <dd className="truncate text-slate-800">{originalMail.folder || '-'}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-slate-500">스캔 시각</dt>
+                      <dd className="text-slate-800">{formatDateTime(originalMail.scanned_at)}</dd>
+                    </div>
+                  </dl>
+
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-600">받은 제목</h3>
+                    <p className="mt-1 rounded-md bg-slate-50 p-2 text-sm text-slate-800">
+                      {originalMail.subject || '(제목 없음)'}
+                    </p>
+                    {originalMail.subject !== ticket.subject && (
+                      <p className="mt-1 text-[11px] text-amber-700">
+                        티켓 제목이 원본과 다릅니다 — 담당자가 정리한 것입니다.
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-600">받은 본문</h3>
+                    <pre className="mt-1 max-h-[420px] overflow-auto whitespace-pre-wrap rounded-md bg-slate-50 p-3 font-sans text-sm leading-relaxed text-slate-800">
+                      {originalMail.body || '(본문 없음)'}
+                    </pre>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
 
           <section className="card p-5">
             <h2 className="text-sm font-semibold text-slate-800">
