@@ -209,6 +209,11 @@ export function useScannedMails(filters: api.ScanFilters) {
   return useQuery({ queryKey: keys.scans(filters), queryFn: () => api.fetchScannedMails(filters) })
 }
 
+/** 처리 결과별 건수 — 스크리닝이 비어 보일 때 어디로 갔는지 알려 줍니다. */
+export function useScanOutcomeCounts() {
+  return useQuery({ queryKey: ['scans', 'outcome-counts'], queryFn: api.countScansByOutcome })
+}
+
 /** 상단 메뉴의 '판단 대기' 배지. 1분마다 다시 셉니다. */
 export function usePendingScanCount() {
   return useQuery({

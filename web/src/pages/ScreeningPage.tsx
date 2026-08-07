@@ -5,10 +5,16 @@ import { useAuth } from '../hooks/useAuth'
 import {
   useConvertScanToTicket,
   useMarkReviewed,
+  useScanOutcomeCounts,
   useScannedMails,
   useSystemLabels,
 } from '../hooks/queries'
-import { SCAN_OUTCOME_LABELS, WORK_TYPES, WORK_TYPE_LABELS } from '../lib/constants'
+import {
+  SCAN_OUTCOMES,
+  SCAN_OUTCOME_LABELS,
+  WORK_TYPES,
+  WORK_TYPE_LABELS,
+} from '../lib/constants'
 import { formatDateTime, relativeDays } from '../lib/format'
 import type { ScannedMail } from '../lib/types'
 
@@ -35,8 +41,14 @@ export default function ScreeningPage() {
 
   const filters = { outcome, unreviewedOnly, search }
   const { data: mails = [], isLoading } = useScannedMails(filters)
+  const { data: outcomeCounts } = useScanOutcomeCounts()
   const markReviewed = useMarkReviewed()
   const convert = useConvertScanToTicket()
+
+  // 지금 필터 밖에 쌓여 있는 것들. 목록이 비었을 때만 씁니다.
+  const elsewhere = SCAN_OUTCOMES.filter((key) => key !== outcome)
+    .map((key) => ({ key, label: SCAN_OUTCOME_LABELS[key], count: outcomeCounts?.[key] ?? 0 }))
+    .filter((entry) => entry.count > 0)
 
   function fail(err: unknown) {
     setError(err instanceof Error ? err.message : String(err))
@@ -100,11 +112,45 @@ export default function ScreeningPage() {
         <div className="space-y-2 lg:col-span-2">
           {isLoading && <p className="text-sm text-slate-500">불러오는 중…</p>}
 
+          {/*
+            "없습니다" 로 끝내면 안 됩니다. 필터가 걸려 있어 안 보이는 것과
+            정말 아무것도 없는 것은 다른 사실인데, 화면은 똑같이 비어 보입니다.
+            에이전트가 메일을 읽었는데 여기가 비면 수집이 실패한 줄 압니다.
+            그래서 다른 칸에 몇 건 있는지 같이 보여 줍니다.
+          */}
           {!isLoading && mails.length === 0 && (
-            <div className="card p-6 text-center text-sm text-slate-500">
-              {unreviewedOnly
-                ? '검토할 메일이 없습니다. 모두 확인하셨습니다.'
-                : '조건에 맞는 메일이 없습니다.'}
+            <div className="card space-y-2 p-6 text-center text-sm text-slate-500">
+              <p>
+                {outcome === 'pending'
+                  ? '자동 분류가 실패한 메일이 없습니다.'
+                  : unreviewedOnly
+                    ? '검토할 메일이 없습니다.'
+                    : '조건에 맞는 메일이 없습니다.'}
+              </p>
+              {elsewhere.length > 0 ? (
+                <p className="text-xs text-slate-400">
+                  다른 칸에 있습니다 —{' '}
+                  {elsewhere.map(({ key, label, count }, index) => (
+                    <span key={key}>
+                      {index > 0 && ' · '}
+                      <button
+                        type="button"
+                        className="underline hover:text-slate-700"
+                        onClick={() => {
+                          setOutcome(key)
+                          setUnreviewedOnly(false)
+                        }}
+                      >
+                        {label} {count}건
+                      </button>
+                    </span>
+                  ))}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400">
+                  에이전트가 읽은 메일이 아직 하나도 없습니다.
+                </p>
+              )}
             </div>
           )}
 

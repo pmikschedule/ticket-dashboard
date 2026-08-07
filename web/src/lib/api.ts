@@ -5,6 +5,7 @@
  * 쿼리가 화면에 흩어지면 RLS 위반이 어디서 났는지 추적할 수 없습니다.
  */
 
+import { SCAN_OUTCOMES } from './constants'
 import type { Resolution, ScanOutcome } from './constants'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
@@ -499,6 +500,26 @@ export async function fetchScannedMails(filters: ScanFilters = {}): Promise<Scan
   }
 
   return unwrap(await query) as ScannedMail[]
+}
+
+/**
+ * 처리 결과별 스캔 건수.
+ *
+ * 스크리닝이 비어 보일 때 "필터에 안 걸린 것" 인지 "정말 없는 것" 인지를
+ * 가르는 데 씁니다. 그 둘은 다른 사실인데 빈 화면은 똑같아 보입니다.
+ */
+export async function countScansByOutcome(): Promise<Record<ScanOutcome, number>> {
+  const counts = await Promise.all(
+    SCAN_OUTCOMES.map(async (key) => {
+      const { count, error } = await supabase
+        .from('scanned_mails')
+        .select('id', { count: 'exact', head: true })
+        .eq('outcome', key)
+      if (error) throw new Error(error.message)
+      return [key, count ?? 0] as const
+    }),
+  )
+  return Object.fromEntries(counts) as Record<ScanOutcome, number>
 }
 
 /**
