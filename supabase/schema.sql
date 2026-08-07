@@ -658,9 +658,9 @@ create table if not exists public.scanned_mails (
   llm_error      text,
   llm_model      text,
 
-  -- 처리 결과
+  -- 처리 결과 (18장에서 'pending' 이 붙습니다)
   outcome     text not null default 'excluded'
-                check (outcome in ('ticketed', 'excluded')),
+                check (outcome in ('ticketed', 'excluded', 'pending')),
   ticket_id   bigint references public.tickets(id) on delete set null,
   reviewed_by uuid references public.users(id) on delete set null,
   reviewed_at timestamptz,
@@ -1394,3 +1394,32 @@ insert into public.app_settings (key, value, description) values
   ('gemini_model', 'gemini-2.5-flash',
    '분류에 쓸 Gemini 모델. 비워 두면 에이전트가 .env 의 GEMINI_MODEL 을 씁니다.')
 on conflict (key) do nothing;
+
+-- ============================================================================
+-- 18. 분류에 **실패한** 메일은 티켓이 아니라 '판단 대기' 로 갑니다
+-- ============================================================================
+-- 기획서 3.1 의 예외 처리는 "내용이 **부실**해도 반려하지 않는다" 입니다 —
+-- LLM 이 요청이라고 **판단은 했는데** 세부를 못 뽑은 경우입니다. 그건 지금처럼
+-- 티켓을 만들고 triage 로 보냅니다.
+--
+-- 그런데 API 오류·안전필터·스키마 위반은 다릅니다. 이때는 요청인지 아닌지를
+-- **판단한 적이 없습니다.** 예전 코드는 그 경우에도 is_request 를 참으로 찍어
+-- 넣어 티켓을 만들었는데, 그건 판단이 아니라 추측입니다. 추측으로 만든 티켓은
+-- 통계 모수에 들어가고 담당자에게 할당되고 요청자에게 회신까지 나갑니다.
+--
+-- 그래서 세 번째 결과를 둡니다. 티켓도 아니고 제외도 아닌, **사람이 아직 정하지
+-- 않은** 상태입니다. 스크리닝 화면에서 사람이 접수할지 버릴지 고릅니다.
+--
+-- 이 상태를 안 보고 지나치면 메일이 조용히 묻힙니다. 그래서 스크리닝 화면의
+-- 기본 필터를 'pending' 으로 두고, 남은 건수를 사이드바에 띄웁니다.
+-- ----------------------------------------------------------------------------
+alter table public.scanned_mails drop constraint if exists scanned_mails_outcome_check;
+alter table public.scanned_mails add constraint scanned_mails_outcome_check
+  check (outcome in ('ticketed', 'excluded', 'pending'));
+
+comment on column public.scanned_mails.outcome is
+  'ticketed=티켓이 됨 · excluded=요청이 아니라 걸러짐 · pending=분류 실패라 사람이 정해야 함';
+
+-- 판단 대기 목록은 화면을 열 때마다 조회합니다. 부분 인덱스로 충분합니다.
+create index if not exists idx_scanned_pending
+  on public.scanned_mails (scanned_at desc) where (outcome = 'pending');

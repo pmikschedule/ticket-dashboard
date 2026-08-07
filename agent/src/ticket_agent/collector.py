@@ -9,6 +9,7 @@ import logging
 
 from .classifier import Classifier
 from .config import Config
+from .constants import SCAN_OUTCOME_PENDING
 from .mail import MailClient
 from .models import RawMail, ScanResult
 from .store import StoreError, TicketStore
@@ -50,7 +51,7 @@ class Collector:
         )
         log.info("'%s' 에서 메일 %d건을 읽었습니다.", self._config.outlook_folder, len(mails))
 
-        scanned = created = duplicates = not_request = classify_failed = 0
+        scanned = created = duplicates = not_request = pending = 0
         errors: list[str] = []
 
         for mail in mails:
@@ -67,17 +68,17 @@ class Collector:
                 duplicates += 1
             elif outcome == "not_request":
                 not_request += 1
+            elif outcome == "pending":
+                pending += 1
             else:
                 created += 1
-                if outcome == "created_with_error":
-                    classify_failed += 1
 
         return ScanResult(
             scanned=scanned,
             created=created,
             skipped_duplicate=duplicates,
             skipped_not_request=not_request,
-            classify_failed=classify_failed,
+            pending=pending,
             errors=errors,
         )
 
@@ -89,6 +90,20 @@ class Collector:
             return "duplicate"
 
         classification = self._classifier.classify(mail)
+
+        # 판별에 **실패한** 경우가 먼저입니다. is_request 를 보기 전에 걸러야
+        # 합니다 — 실패했을 때의 is_request 는 판단이 아니라 자리채움입니다.
+        if classification.failed:
+            log.warning(
+                "분류에 실패해 판단 대기로 남깁니다: %r (%s)",
+                mail.subject,
+                classification.error,
+            )
+            self._store.record_scanned_mail(
+                mail, classification, None, outcome=SCAN_OUTCOME_PENDING
+            )
+            self._mark_done(mail)
+            return "pending"
 
         if not classification.is_request:
             log.info(
@@ -115,18 +130,17 @@ class Collector:
             self._store.upload_attachment(ticket_id, attachment)
 
         log.info(
-            "티켓 #%s 생성: %r [%s/%s/%s/%s]%s",
+            "티켓 #%s 생성: %r [%s/%s/%s/%s]",
             ticket_id,
             classification.title,
             classification.work_type,
             classification.category,
             classification.severity,
             classification.system_type or "미분류",
-            " ⚠️ 분류 실패" if classification.failed else "",
         )
 
         self._mark_done(mail)
-        return "created_with_error" if classification.failed else "created"
+        return "created"
 
     def _mark_done(self, mail: RawMail) -> None:
         """적재에 성공한 뒤에만 부릅니다. 표시가 실패해도 티켓은 이미 살아 있습니다."""

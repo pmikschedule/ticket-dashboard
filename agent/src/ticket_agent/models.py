@@ -39,8 +39,18 @@ class Classification:
     """LLM 판별 결과.
 
     `is_request` 가 False 면 티켓으로 만들지 않습니다.
-    `error` 가 채워져 있으면 판별에 실패한 것이고, 그래도 티켓은 만들어집니다
-    (기획서 3.1 예외 처리 — "내용이 부실해도 반려하지 않는다").
+
+    `error` 가 채워져 있으면 **판별 자체를 못 한 것**입니다. 이때는 티켓을
+    만들지 않고 스크리닝의 '판단 대기' 로 보냅니다 — 요청인지 아닌지를 모르는데
+    티켓을 만들면 그 티켓은 통계 모수에 들어가고 담당자에게 할당되고 요청자에게
+    회신까지 나갑니다. 추측을 사실로 만드는 셈입니다.
+
+    기획서 3.1 의 "내용이 부실해도 반려하지 않는다" 는 **판별에 성공한** 경우
+    이야기입니다. LLM 이 요청이라고 판단했으면 세부가 비어 있어도 티켓이 되고
+    `triage` 로 갑니다. 그건 그대로입니다.
+
+    메일을 버리지 않는다는 원칙은 양쪽 다 지킵니다 — 실패한 건도 `scanned_mails`
+    에 원문째 남고 화면에 뜹니다. 달라지는 것은 **누가 접수를 정하느냐**입니다.
 
     `work_type` 은 LLM 이 장애/유지보수 둘 중에서만 고릅니다.
     신규개발 승격은 공수 판단이 필요해 관리자가 화면에서 합니다.
@@ -126,14 +136,16 @@ class ScanResult:
     created: int = 0
     skipped_duplicate: int = 0
     skipped_not_request: int = 0
-    classify_failed: int = 0
+    #: 분류에 실패해 티켓을 만들지 않고 '판단 대기' 로 남긴 건.
+    #: created 에 **포함되지 않습니다** — 티켓이 아니기 때문입니다.
+    pending: int = 0
     errors: list[str] = field(default_factory=list)
 
     def summary(self) -> str:
         return (
             f"스캔 {self.scanned}건 · 신규 티켓 {self.created}건 · "
             f"중복 {self.skipped_duplicate}건 · 대상아님 {self.skipped_not_request}건 · "
-            f"분류실패(적재됨) {self.classify_failed}건 · 오류 {len(self.errors)}건"
+            f"판단대기 {self.pending}건 · 오류 {len(self.errors)}건"
         )
 
 

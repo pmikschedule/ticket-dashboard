@@ -58,7 +58,17 @@ class ManualProcessor:
 
         # 사람이 등록한 건이므로 LLM 이 "요청 아님" 이라고 해도 티켓을 만듭니다.
         # 판단은 이미 사람이 했습니다. LLM 의 몫은 분류뿐입니다.
-        if not classification.is_request:
+        #
+        # 분류에 **실패**했을 때도 마찬가지입니다. 메일 수집 쪽은 실패하면
+        # 판단 대기로 보내지만 여기는 아닙니다 — 거기서 미루는 판단이
+        # '이게 요청인가' 인데, 그건 사람이 등록 버튼을 누른 순간 끝났습니다.
+        if classification.failed:
+            log.warning(
+                "수동 등록 #%s — 분류에 실패했지만 사람이 등록했으므로 진행합니다: %s",
+                entry.id,
+                classification.error,
+            )
+        elif not classification.is_request:
             log.info(
                 "수동 등록 #%s — LLM 은 요청이 아니라고 봤지만 사람이 등록했으므로 진행합니다.",
                 entry.id,

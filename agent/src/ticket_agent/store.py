@@ -279,11 +279,17 @@ class TicketStore:
         mail: RawMail,
         classification: Classification | None,
         ticket_id: int | None,
+        outcome: str | None = None,
     ) -> None:
         """스캔한 메일을 전부 남깁니다 — 티켓이 안 된 것도.
 
         이게 없으면 LLM 이 잘못 걸러낸 메일은 어디에도 흔적이 남지 않아
         아무도 오판을 알 수 없습니다. 실패해도 수집을 멈추지는 않습니다.
+
+        `outcome` 을 주지 않으면 티켓 유무로 정합니다. 'pending'(분류 실패라
+        사람이 정해야 함)은 티켓이 없다는 점에서 'excluded' 와 같아 보이지만
+        뜻이 정반대라 — 하나는 판단이 끝났고 하나는 시작도 안 했습니다 —
+        부르는 쪽이 명시해야 합니다.
         """
         payload: dict[str, Any] = {
             "message_id": mail.message_id,
@@ -294,7 +300,7 @@ class TicketStore:
             "sender_name": mail.sender_name,
             "received_at": _iso(mail.received_at),
             "folder": mail.folder,
-            "outcome": "ticketed" if ticket_id else "excluded",
+            "outcome": outcome or ("ticketed" if ticket_id else "excluded"),
             "ticket_id": ticket_id,
         }
         if classification is not None:

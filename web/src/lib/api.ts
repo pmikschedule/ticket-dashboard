@@ -5,7 +5,7 @@
  * 쿼리가 화면에 흩어지면 RLS 위반이 어디서 났는지 추적할 수 없습니다.
  */
 
-import type { Resolution } from './constants'
+import type { Resolution, ScanOutcome } from './constants'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
   AppSetting,
@@ -501,11 +501,35 @@ export async function fetchScannedMails(filters: ScanFilters = {}): Promise<Scan
   return unwrap(await query) as ScannedMail[]
 }
 
-/** 검토 완료 표시 — LLM 판정이 맞았다고 확인하는 것입니다. */
+/**
+ * 판단 대기 건수.
+ *
+ * 분류에 실패한 메일은 티켓이 되지 않으므로 보드에 뜨지 않습니다. 스크리닝
+ * 화면을 열어 보는 사람이 없으면 그대로 묻히기 때문에 상단 메뉴에 숫자를
+ * 띄웁니다. 본문은 필요 없으니 head 로 개수만 받습니다.
+ */
+export async function countPendingScans(): Promise<number> {
+  const { count, error } = await supabase
+    .from('scanned_mails')
+    .select('id', { count: 'exact', head: true })
+    .eq('outcome', 'pending')
+    .is('reviewed_at', null)
+  if (error) throw new Error(error.message)
+  return count ?? 0
+}
+
+/**
+ * 검토 완료 표시 — LLM 판정이 맞았다고 확인하는 것입니다.
+ *
+ * `outcome` 은 '판단 대기' 를 접수하지 않기로 정했을 때 씁니다. 그대로 두면
+ * 사람이 이미 정한 건이 대기 목록에 계속 남습니다. 'pending' 은 아직 아무도
+ * 안 정했다는 뜻이고, 정한 순간 그 사실이 아니게 됩니다.
+ */
 export async function markScanReviewed(
   id: number,
   userId: string,
   note?: string,
+  outcome?: ScanOutcome,
 ): Promise<void> {
   const { error } = await supabase
     .from('scanned_mails')
@@ -513,6 +537,7 @@ export async function markScanReviewed(
       reviewed_by: userId,
       reviewed_at: new Date().toISOString(),
       review_note: note?.trim() || null,
+      ...(outcome ? { outcome } : {}),
     })
     .eq('id', id)
   if (error) throw new Error(error.message)

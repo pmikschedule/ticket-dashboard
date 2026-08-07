@@ -259,10 +259,20 @@ def _clean_due_date(value: Any) -> date | None:
 
 
 def _fallback(mail: RawMail, error: str, model: str | None = None) -> Classification:
-    """분류에 실패했을 때. 티켓은 만들되 Triage 로 보냅니다."""
+    """분류에 실패했을 때. **티켓을 만들지 않고** 사람의 판단으로 넘깁니다.
+
+    등급·유형 자리는 채워 두지만 이 값들은 **쓰이지 않습니다.** 사람이 스크리닝
+    화면에서 접수하기로 정할 때 그 자리에서 고릅니다. 여기서 채우는 이유는
+    Classification 이 이 필드들을 필수로 받기 때문이지, 추정한 값이어서가
+    아닙니다 — 그 구분이 흐려지면 '기본값 medium' 이 '판정 medium' 으로 읽힙니다.
+
+    `is_request` 는 **False 가 아닙니다.** 요청이 아니라고 판단한 것이 아니라
+    판단을 못 한 것이고, 그 둘은 다른 사실입니다. 갈림길은 collector 가
+    `failed` 를 먼저 보고 정합니다.
+    """
     title = mail.subject.strip() or first_line(mail.body) or "(제목 없음)"
     return Classification(
-        is_request=True,  # 판별을 못 했으므로 사람이 보게 둡니다
+        is_request=False,  # 판단한 적이 없습니다. failed 가 먼저 걸립니다.
         title=title[:200],
         work_type=FALLBACK_WORK_TYPE,
         category=FALLBACK_CATEGORY,

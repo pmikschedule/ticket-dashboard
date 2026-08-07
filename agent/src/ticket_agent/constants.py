@@ -83,3 +83,25 @@ FALLBACK_STATUS = "triage"
 
 # 시스템을 못 정하면 값을 지어내지 않고 비워 둡니다. 화면에는 '미분류' 로 보입니다.
 FALLBACK_SYSTEM_TYPE: str | None = None
+
+
+# 스캔한 메일의 처리 결과. web/src/lib/constants.ts 의 SCAN_OUTCOMES 와
+# supabase/schema.sql 의 scanned_mails_outcome_check 제약과 **같은 값**입니다.
+#
+#   ticketed  티켓이 됐다
+#   excluded  요청이 아니라고 판단해 걸렀다   ← 판단이 끝난 상태
+#   pending   분류에 실패해 사람이 정해야 한다 ← 판단을 시작도 못 한 상태
+#
+# excluded 와 pending 은 둘 다 티켓이 없지만 뜻이 정반대입니다. 하나로 합치면
+# "걸렀다" 안에 "모르겠다" 가 섞여 들어가고, 스크리닝 화면에서 무엇을 먼저
+# 봐야 하는지가 사라집니다.
+SCAN_OUTCOME_TICKETED = "ticketed"
+SCAN_OUTCOME_EXCLUDED = "excluded"
+SCAN_OUTCOME_PENDING = "pending"
+
+SCAN_OUTCOMES = (SCAN_OUTCOME_TICKETED, SCAN_OUTCOME_EXCLUDED, SCAN_OUTCOME_PENDING)
+SCAN_OUTCOME_LABELS = {
+    "ticketed": "티켓 생성됨",
+    "excluded": "제외됨",
+    "pending": "판단 대기",
+}

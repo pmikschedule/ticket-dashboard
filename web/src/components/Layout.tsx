@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
+import { usePendingScanCount } from '../hooks/queries'
 import { useAuth } from '../hooks/useAuth'
 import { ROLE_LABELS } from '../lib/constants'
 
@@ -19,6 +20,9 @@ const ADMIN_NAV = [
 
 export default function Layout() {
   const { user, isAdmin, signOut } = useAuth()
+  // 분류에 실패한 메일은 티켓이 아니라 스크리닝에 쌓입니다. 보드에는 안 뜨므로
+  // 여기 숫자가 없으면 아무도 모르는 채로 묻힙니다.
+  const { data: pendingScans = 0 } = usePendingScanCount()
 
   return (
     <div className="min-h-screen">
@@ -54,6 +58,14 @@ export default function Layout() {
                 }
               >
                 {item.label}
+                {item.to === '/screening' && pendingScans > 0 && (
+                  <span
+                    title={`자동 분류가 실패해 접수 여부를 정해야 하는 메일 ${pendingScans}건`}
+                    className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[11px] font-semibold text-amber-800"
+                  >
+                    {pendingScans}
+                  </span>
+                )}
               </NavLink>
             ))}
             {isAdmin &&

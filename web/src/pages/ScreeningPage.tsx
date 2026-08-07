@@ -19,13 +19,15 @@ import type { ScannedMail } from '../lib/types'
  * 이 화면이 없으면 LLM 이 잘못 걸러낸 메일은 어디에도 흔적이 남지 않아
  * 아무도 오판을 알 수 없습니다.
  *
- * 기본 필터가 '제외됨 · 미검토' 인 이유: 검토가 필요한 건이 정확히 그것이기 때문입니다.
+ * 기본 필터가 '판단 대기' 인 이유: 분류에 실패한 메일은 티켓이 되지 않고 여기
+ * 쌓입니다. 이 화면을 안 보면 그대로 묻히므로, 열자마자 그것부터 보여줍니다.
+ * '제외됨' 은 LLM 이 판단을 끝낸 건이라 급하지 않습니다.
  */
 export default function ScreeningPage() {
   const { user, isAdmin } = useAuth()
   const systemLabel = useSystemLabels()
 
-  const [outcome, setOutcome] = useState<string>('excluded')
+  const [outcome, setOutcome] = useState<string>('pending')
   const [unreviewedOnly, setUnreviewedOnly] = useState(true)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<ScannedMail | null>(null)
@@ -45,8 +47,9 @@ export default function ScreeningPage() {
       <div className="card p-4">
         <h1 className="text-base font-semibold text-slate-900">메일 스크리닝</h1>
         <p className="mt-1 text-sm text-slate-500">
-          에이전트가 읽은 메일 전부입니다. LLM 이 잘못 걸러낸 건을 여기서 티켓으로 되살릴 수
-          있습니다.
+          에이전트가 읽은 메일 전부입니다. <strong>판단 대기</strong>는 자동 분류가 실패해
+          접수 여부를 사람이 정해야 하는 건이고, <strong>제외됨</strong>은 LLM 이 요청이
+          아니라고 판단한 건입니다. 둘 다 여기서 티켓으로 되살릴 수 있습니다.
         </p>
       </div>
 
@@ -76,6 +79,7 @@ export default function ScreeningPage() {
             value={outcome}
             onChange={(event) => setOutcome(event.target.value)}
           >
+            <option value="pending">판단 대기</option>
             <option value="excluded">제외됨</option>
             <option value="ticketed">티켓 생성됨</option>
             <option value="all">전체</option>
@@ -121,7 +125,9 @@ export default function ScreeningPage() {
                     className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${
                       mail.outcome === 'ticketed'
                         ? 'bg-emerald-50 text-emerald-700'
-                        : 'bg-slate-100 text-slate-600'
+                        : mail.outcome === 'pending'
+                          ? 'bg-amber-100 text-amber-800'
+                          : 'bg-slate-100 text-slate-600'
                     }`}
                   >
                     {SCAN_OUTCOME_LABELS[mail.outcome]}
@@ -263,7 +269,13 @@ export default function ScreeningPage() {
                     onConfirmExclusion={() => {
                       if (!user) return
                       markReviewed.mutate(
-                        { id: selected.id, userId: user.id },
+                        {
+                          id: selected.id,
+                          userId: user.id,
+                          // 판단 대기를 접수 안 하기로 정했으면 그건 이제
+                          // '아직 모름' 이 아니라 '걸렀음' 입니다.
+                          outcome: selected.outcome === 'pending' ? 'excluded' : undefined,
+                        },
                         { onSuccess: () => setSelected(null), onError: fail },
                       )
                     }}
@@ -294,11 +306,14 @@ function ConvertPanel({
   onConfirmExclusion: () => void
 }) {
   const [workType, setWorkType] = useState('maintenance')
+  const isPending = scan.outcome === 'pending'
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-600">
-        LLM 이 요청이 아니라고 판단했습니다. 실제로는 요청이라면 티켓으로 되살리세요.
+        {isPending
+          ? '자동 분류가 실패해 요청 여부를 판단하지 못했습니다. 원문을 보고 접수할지 정하세요.'
+          : 'LLM 이 요청이 아니라고 판단했습니다. 실제로는 요청이라면 티켓으로 되살리세요.'}
       </p>
 
       <div className="flex flex-wrap items-end gap-2">
@@ -321,16 +336,17 @@ function ConvertPanel({
         </div>
 
         <button type="button" className="btn-primary" onClick={() => onConvert(workType)}>
-          티켓으로 전환
+          {isPending ? '접수 (티켓 생성)' : '티켓으로 전환'}
         </button>
         <button type="button" className="btn-secondary" onClick={onConfirmExclusion}>
-          판정이 맞음 (검토 완료)
+          {isPending ? '접수 안 함' : '판정이 맞음 (검토 완료)'}
         </button>
       </div>
 
       <p className="text-[11px] text-slate-400">
         전환하면 <strong>Triage</strong> 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시
         티켓이 되지는 않습니다 (메일 ID {scan.message_id} 기준).
+        {isPending && ' 접수하지 않아도 원문은 이 화면에 계속 남습니다.'}
       </p>
     </div>
   )

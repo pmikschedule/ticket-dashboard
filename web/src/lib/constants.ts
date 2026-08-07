@@ -249,13 +249,20 @@ export const RULE_KIND_LABELS: Record<RuleKind, string> = {
   exclude: '제외 대상',
 }
 
-/** 스캔한 메일의 처리 결과 */
-export const SCAN_OUTCOMES = ['ticketed', 'excluded'] as const
+/**
+ * 스캔한 메일의 처리 결과.
+ *
+ * `excluded` 와 `pending` 은 둘 다 티켓이 없지만 뜻이 정반대입니다.
+ * 제외는 **판단이 끝난** 것이고, 판단 대기는 분류가 실패해 **시작도 못 한**
+ * 것입니다. 하나로 합치면 "걸렀다" 안에 "모르겠다" 가 섞여 들어갑니다.
+ */
+export const SCAN_OUTCOMES = ['ticketed', 'excluded', 'pending'] as const
 export type ScanOutcome = (typeof SCAN_OUTCOMES)[number]
 
 export const SCAN_OUTCOME_LABELS: Record<ScanOutcome, string> = {
   ticketed: '티켓 생성됨',
   excluded: '제외됨',
+  pending: '판단 대기',
 }
 
 export const ROLES = ['admin', 'member'] as const

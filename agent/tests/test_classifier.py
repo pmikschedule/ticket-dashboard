@@ -116,10 +116,18 @@ class TestParseResponse:
 
 
 class TestFallback:
-    def test_fallback_keeps_ticket_alive(self):
-        """기획서 3.1 — 분류에 실패해도 반려하지 않고 적재합니다."""
+    def test_fallback_does_not_guess_is_request(self):
+        """판별을 못 했으면 판별했다고 하지 않습니다.
+
+        예전에는 여기서 is_request=True 를 찍어 티켓을 만들었습니다. 그건
+        판단이 아니라 추측이고, 추측으로 만든 티켓은 통계 모수에 들어가고
+        담당자에게 할당되고 요청자에게 회신까지 나갑니다.
+
+        메일은 그래도 버려지지 않습니다 — collector 가 failed 를 보고
+        스크리닝의 '판단 대기' 로 보냅니다 (test_collector 참고).
+        """
         result = _fallback(make_mail(), "API 오류: timeout", "gemini-2.5-flash")
-        assert result.is_request is True
+        assert result.is_request is False
         assert result.failed is True
         assert result.error == "API 오류: timeout"
         assert result.work_type == "maintenance"

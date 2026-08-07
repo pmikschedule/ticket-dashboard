@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import * as api from '../lib/api'
-import type { Resolution } from '../lib/constants'
+import type { Resolution, ScanOutcome } from '../lib/constants'
 import type { TicketFilters, TicketMeta } from '../lib/types'
 
 export const keys = {
@@ -209,11 +209,29 @@ export function useScannedMails(filters: api.ScanFilters) {
   return useQuery({ queryKey: keys.scans(filters), queryFn: () => api.fetchScannedMails(filters) })
 }
 
+/** 상단 메뉴의 '판단 대기' 배지. 1분마다 다시 셉니다. */
+export function usePendingScanCount() {
+  return useQuery({
+    queryKey: ['scans', 'pending-count'],
+    queryFn: api.countPendingScans,
+    refetchInterval: 60_000,
+  })
+}
+
 export function useMarkReviewed() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, userId, note }: { id: number; userId: string; note?: string }) =>
-      api.markScanReviewed(id, userId, note),
+    mutationFn: ({
+      id,
+      userId,
+      note,
+      outcome,
+    }: {
+      id: number
+      userId: string
+      note?: string
+      outcome?: ScanOutcome
+    }) => api.markScanReviewed(id, userId, note, outcome),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['scans'] }),
   })
 }

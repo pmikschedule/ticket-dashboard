@@ -115,8 +115,15 @@ class FakeStore:
     def setting(self, key, default=""):
         return self.settings.get(key, default)
 
-    def record_scanned_mail(self, mail, classification, ticket_id):
-        self.scanned.append((mail.message_id, classification, ticket_id))
+    def record_scanned_mail(self, mail, classification, ticket_id, outcome=None):
+        self.scanned.append(
+            (
+                mail.message_id,
+                classification,
+                ticket_id,
+                outcome or ("ticketed" if ticket_id else "excluded"),
+            )
+        )
 
 
 def request(**overrides) -> Classification:
@@ -186,16 +193,47 @@ class TestCollector:
         assert result.created == 0
         assert classifier.calls == []  # LLM 을 부르지 않습니다 — 비용이 그냥 나갑니다
 
-    def test_classification_failure_still_creates_ticket(self):
-        """기획서 3.1 예외 처리."""
+    def test_classification_failure_goes_to_pending_not_ticket(self):
+        """분류에 실패하면 티켓이 아니라 사람의 판단으로 넘깁니다.
+
+        요청인지 아닌지를 모르는 상태입니다. 여기서 티켓을 만들면 그 티켓은
+        통계 모수에 들어가고 담당자에게 할당되고 요청자에게 회신까지 나갑니다.
+        """
         failed = request(error="API 오류: timeout", confidence=None)
         collector, _, store = build([make_mail("m-3")], {"m-3": failed})
 
         result = collector.run_once()
 
-        assert result.created == 1
-        assert result.classify_failed == 1
-        assert store.created[0][1].failed is True
+        assert result.pending == 1
+        assert result.created == 0
+        assert store.created == []  # 티켓은 만들지 않습니다
+        assert result.errors == []  # 오류가 아니라 정상 경로입니다
+
+    def test_classification_failure_is_still_recorded(self):
+        """티켓을 안 만들 뿐 메일을 버리지는 않습니다 (기획서 3.1)."""
+        failed = request(error="API 오류: timeout", confidence=None)
+        collector, _, store = build([make_mail("m-3")], {"m-3": failed})
+
+        collector.run_once()
+
+        message_id, classification, ticket_id, outcome = store.scanned[0]
+        assert message_id == "m-3"
+        assert outcome == "pending"
+        assert ticket_id is None
+        assert classification.error == "API 오류: timeout"
+
+    def test_pending_mail_is_marked_processed(self):
+        """판단 대기로 남긴 뒤에도 메일은 처리 표시합니다.
+
+        안 하면 다음 스캔에서 같은 메일을 다시 분류합니다 — LLM 호출 비용이
+        계속 나가고, 사람이 이미 내린 판단을 덮어쓸 수 있습니다.
+        """
+        failed = request(error="API 오류: timeout", confidence=None)
+        collector, mail, _ = build([make_mail("m-3")], {"m-3": failed})
+
+        collector.run_once()
+
+        assert mail.processed == [("m-3", None)]
 
     def test_attachments_are_uploaded(self):
         mail_with_file = make_mail(
@@ -262,9 +300,10 @@ class TestScreening:
         collector.run_once()
 
         assert len(store.scanned) == 1
-        message_id, classification, ticket_id = store.scanned[0]
+        message_id, classification, ticket_id, outcome = store.scanned[0]
         assert message_id == "s-1"
         assert ticket_id is not None
+        assert outcome == "ticketed"
         assert classification.is_request is True
 
     def test_rejected_mail_is_still_recorded(self):
@@ -273,9 +312,10 @@ class TestScreening:
         collector.run_once()
 
         assert len(store.scanned) == 1
-        message_id, classification, ticket_id = store.scanned[0]
+        message_id, classification, ticket_id, outcome = store.scanned[0]
         assert message_id == "s-2"
         assert ticket_id is None                 # 티켓은 안 만들지만
+        assert outcome == "excluded"             # 판단은 끝났습니다 (pending 아님)
         assert classification.is_request is False  # 판정 근거는 남습니다
         assert classification.reason == "일상 대화"
 
