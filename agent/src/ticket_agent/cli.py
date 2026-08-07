@@ -16,6 +16,7 @@ import logging
 import sys
 import time
 
+from . import __version__
 from .classifier import Classifier
 from .collector import Collector
 from .config import Config, ConfigError, load_config
@@ -180,6 +181,7 @@ def cmd_run(config: Config, args: argparse.Namespace) -> int:
 def cmd_doctor(config: Config, args: argparse.Namespace) -> int:
     """설정과 외부 연결을 점검합니다. 실패해도 다음 항목을 계속 봅니다."""
     print("■ 설정")
+    print(f"  에이전트 버전 : {__version__}")
     print(f"  메일 백엔드   : {config.mail_backend}")
     print(f"  대상 폴더     : {config.outlook_folder}")
     print(f"  처리 후 이동  : {config.outlook_done_folder or '(이동 안 함, 읽음 표시만)'}")
