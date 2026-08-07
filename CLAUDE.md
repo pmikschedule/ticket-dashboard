@@ -10,6 +10,7 @@
 | [docs/SPEC-EMAIL-TICKET.md](docs/SPEC-EMAIL-TICKET.md) | **정본 사양.** 충돌하면 이 문서가 이깁니다 |
 | [docs/DESIGN.md](docs/DESIGN.md) | 기획서가 정하지 않은 부분의 설계 결정과 근거 |
 | [docs/SETUP.md](docs/SETUP.md) | 설치·배포·운영 |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | 인수인계. **그 시점의 상태**이지 사양이 아닙니다 |
 | [docs/reference/](docs/reference/) | **다른 프로젝트의 참고 자료.** 이 시스템의 사양이 아닙니다 |
 
 ## 구성
