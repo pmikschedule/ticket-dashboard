@@ -61,6 +61,11 @@ export interface Ticket {
   due_date: string | null
   source_message_id: string | null
   source_folder: string | null
+  /**
+   * 본문에 딸려 있어 첨부에서 뺀 파일 이름들 (서명 로고·명함 등).
+   * null 이면 판정 이전에 만들어진 티켓이고, 빈 배열이면 뺀 것이 없습니다.
+   */
+  skipped_inline_attachments: string[] | null
   planned_start_date: string | null
   planned_end_date: string | null
   created_at: string

@@ -12,6 +12,7 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Iterable
 
+from ..attachments import is_inline
 from ..models import Attachment, RawMail
 from ..textutil import sanitize_filename
 from .base import MailError
@@ -24,6 +25,23 @@ OL_FORMAT_PLAIN = 1
 
 # 첨부 하나가 이 크기를 넘으면 건너뜁니다. Storage 비용과 메모리를 위한 상한.
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+# MAPI 속성. Outlook 개체 모델에는 없어서 PropertyAccessor 로 직접 읽습니다.
+PR_ATTACH_CONTENT_ID = "http://schemas.microsoft.com/mapi/proptag/0x3712001F"
+PR_ATTACHMENT_HIDDEN = "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B"
+PR_ATTACH_FLAGS = "http://schemas.microsoft.com/mapi/proptag/0x37140003"
+
+
+def _mapi(attachment, prop: str, default=None):
+    """MAPI 속성 하나. 없는 속성을 물으면 COM 이 예외를 던집니다.
+
+    속성이 없는 것은 흔한 일이지 오류가 아닙니다 — 평범한 첨부에는
+    Content-ID 가 아예 없습니다. 그래서 조용히 기본값으로 넘어갑니다.
+    """
+    try:
+        return attachment.PropertyAccessor.GetProperty(prop)
+    except Exception:
+        return default
 
 
 def _to_utc(value) -> datetime | None:
@@ -42,7 +60,10 @@ def _to_utc(value) -> datetime | None:
 class OutlookMailClient:
     """Outlook 데스크톱에 COM 으로 붙습니다."""
 
-    def __init__(self) -> None:
+    def __init__(self, min_image_bytes: int = 0) -> None:
+        # 0 이면 크기 기준은 꺼져 있습니다. 서명 이미지가 Content-ID 없이 오는
+        # 클라이언트를 만났을 때만 켭니다 — 근거가 약한 기준이라 기본은 끕니다.
+        self._min_image_bytes = min_image_bytes
         try:
             import win32com.client  # type: ignore[import-not-found]
         except ImportError as exc:  # pragma: no cover - Windows 전용 경로
@@ -115,16 +136,21 @@ class OutlookMailClient:
         return collected
 
     def _to_raw_mail(self, item, folder: str, received: datetime | None) -> RawMail:
+        # 본문 HTML 을 먼저 읽습니다. 첨부가 본문에 딸린 것인지 가르려면
+        # 본문이 그 첨부를 cid: 로 참조하는지 봐야 하기 때문입니다.
+        body_html = (getattr(item, "HTMLBody", "") or None)
+        attachments, skipped_inline = self._read_attachments(item, body_html)
         return RawMail(
             message_id=str(item.EntryID),
             subject=(getattr(item, "Subject", "") or "").strip(),
             body=(getattr(item, "Body", "") or ""),
-            body_html=(getattr(item, "HTMLBody", "") or None),
+            body_html=body_html,
             sender_email=self._sender_address(item),
             sender_name=(getattr(item, "SenderName", "") or None),
             received_at=received,
             folder=folder,
-            attachments=self._read_attachments(item),
+            attachments=attachments,
+            skipped_inline=tuple(skipped_inline),
         )
 
     @staticmethod
@@ -143,19 +169,44 @@ class OutlookMailClient:
                 log.debug("Exchange 주소를 SMTP 로 바꾸지 못했습니다", exc_info=True)
         return address
 
-    def _read_attachments(self, item) -> list[Attachment]:
-        """COM 첨부는 바이트로 직접 못 읽어서 임시 파일을 거칩니다."""
+    def _read_attachments(
+        self, item, body_html: str | None = None
+    ) -> tuple[list[Attachment], list[str]]:
+        """COM 첨부는 바이트로 직접 못 읽어서 임시 파일을 거칩니다.
+
+        서명의 로고나 본문에 끼워 넣은 이미지는 아웃룩이 보기에 첨부와 똑같아서
+        그냥 담으면 티켓마다 쌓입니다. 무엇을 버릴지는 `attachments.is_inline`
+        이 정하고, 여기서는 그 판정에 필요한 MAPI 속성만 읽어 넘깁니다.
+        """
         results: list[Attachment] = []
+        skipped: list[str] = []
         try:
             count = int(item.Attachments.Count)
         except Exception:
-            return results
+            return results, skipped
 
         for index in range(1, count + 1):
             tmp_path = None
             try:
                 attachment = item.Attachments.Item(index)
                 size = int(getattr(attachment, "Size", 0) or 0)
+
+                if is_inline(
+                    file_name=str(attachment.FileName or ""),
+                    content_id=_mapi(attachment, PR_ATTACH_CONTENT_ID),
+                    hidden=bool(_mapi(attachment, PR_ATTACHMENT_HIDDEN, False)),
+                    attach_flags=int(_mapi(attachment, PR_ATTACH_FLAGS, 0) or 0),
+                    attach_type=getattr(attachment, "Type", None),
+                    body_html=body_html,
+                    min_image_bytes=self._min_image_bytes,
+                    size_bytes=size,
+                ):
+                    log.debug(
+                        "본문에 딸린 이미지라 첨부에서 뺍니다: %s", attachment.FileName
+                    )
+                    skipped.append(sanitize_filename(str(attachment.FileName or "")))
+                    continue
+
                 if size > MAX_ATTACHMENT_BYTES:
                     log.warning(
                         "첨부 '%s' 는 %d바이트로 상한(%d)을 넘어 건너뜁니다",
@@ -179,7 +230,14 @@ class OutlookMailClient:
                         os.unlink(tmp_path)
                     except OSError:
                         pass
-        return results
+
+        if skipped:
+            log.info(
+                "본문에 딸린 이미지 %d개를 첨부에서 뺐습니다: %s",
+                len(skipped),
+                ", ".join(skipped),
+            )
+        return results, skipped
 
     # ── 처리 표시 ───────────────────────────────────────────────────────────
     def mark_processed(self, message_id: str, move_to: str | None = None) -> None:

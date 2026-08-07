@@ -1423,3 +1423,19 @@ comment on column public.scanned_mails.outcome is
 -- 판단 대기 목록은 화면을 열 때마다 조회합니다. 부분 인덱스로 충분합니다.
 create index if not exists idx_scanned_pending
   on public.scanned_mails (scanned_at desc) where (outcome = 'pending');
+
+-- ============================================================================
+-- 19. 본문에 딸려 온 이미지는 첨부로 담지 않습니다
+-- ============================================================================
+-- 서명의 회사 로고, 명함 이미지, 본문에 끼워 넣은 그림은 아웃룩이 보기에 첨부와
+-- 똑같습니다. 그대로 담으면 티켓마다 로고가 하나씩 쌓이고 첨부 목록에서 정작
+-- 필요한 파일이 묻힙니다. 판정은 에이전트의 attachments.is_inline 이 합니다.
+--
+-- 뺀 것은 **이름만** 남깁니다. 내용은 안 담으므로 Storage 도 안 씁니다.
+-- 이름이라도 남기는 이유는 판정이 틀릴 수 있기 때문입니다 — 잘못 뺀 사실이
+-- 어디에도 안 남으면 요청자가 다시 보내 줄 때까지 아무도 모릅니다.
+-- ----------------------------------------------------------------------------
+alter table public.tickets add column if not exists skipped_inline_attachments text[];
+
+comment on column public.tickets.skipped_inline_attachments is
+  '본문에 딸려 있어 첨부에서 제외한 파일 이름들. 내용은 저장하지 않습니다';

@@ -104,6 +104,11 @@ class Config:
     send_poll_interval: int
     reply_cc: list[str] = field(default_factory=list)
 
+    #: 이 크기 미만의 **이미지** 파일을 첨부에서 뺍니다. 0 이면 끕니다(기본).
+    #: Content-ID 없이 서명 이미지를 보내는 클라이언트를 만났을 때만 켭니다.
+    #: 근거가 약한 기준이라 기본값은 '안 씀' 입니다.
+    attachment_min_image_bytes: int = 0
+
     fixture_mail_path: Path = Path("fixtures/sample_mails.json")
     fixture_outbox_dir: Path = Path(".fixture-outbox")
 
@@ -143,6 +148,7 @@ def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
         outlook_folder=_optional("OUTLOOK_FOLDER", "받은 편지함") or "받은 편지함",
         outlook_done_folder=_optional("OUTLOOK_DONE_FOLDER"),
         scan_limit=_int("SCAN_LIMIT", 50),
+        attachment_min_image_bytes=_int("ATTACHMENT_MIN_IMAGE_BYTES", 0),
         scan_since=parse_since(_optional("SCAN_SINCE")),
         send_mode=send_mode,
         send_poll_interval=_int("SEND_POLL_INTERVAL", 30),

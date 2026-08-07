@@ -287,6 +287,26 @@ export default function TicketDetailPage() {
                 ))}
               </ul>
             )}
+
+            {/*
+              뺀 파일을 밝힙니다. 판정이 틀릴 수 있는데 — 요청자가 붙인 파일을
+              서명 이미지로 잘못 볼 수 있습니다 — 그 사실이 어디에도 안 남으면
+              요청자가 다시 보내 줄 때까지 아무도 모릅니다.
+            */}
+            {ticket.skipped_inline_attachments &&
+              ticket.skipped_inline_attachments.length > 0 && (
+                <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
+                  본문에 딸려 있어 제외한 이미지 {ticket.skipped_inline_attachments.length}개:{' '}
+                  <span className="text-slate-600">
+                    {ticket.skipped_inline_attachments.join(', ')}
+                  </span>
+                  <br />
+                  <span className="text-slate-400">
+                    서명 로고·명함으로 판단한 것입니다. 필요한 파일이었다면 요청자에게 다시
+                    요청하세요 — 내용은 저장하지 않습니다.
+                  </span>
+                </p>
+              )}
           </section>
 
           <section className="card p-5">

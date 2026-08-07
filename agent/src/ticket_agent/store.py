@@ -183,6 +183,9 @@ class TicketStore:
             "due_date": classification.due_date.isoformat() if classification.due_date else None,
             "source_message_id": mail.message_id,
             "source_folder": mail.folder,
+            # 뺀 것이 없으면 빈 배열이 아니라 null 입니다 — "뺀 게 없다" 와
+            # "판정을 안 했다" 를 화면에서 구분할 수 있어야 합니다.
+            "skipped_inline_attachments": list(mail.skipped_inline) or None,
         }
 
         return self._create_ticket_row(ticket_payload, classification)

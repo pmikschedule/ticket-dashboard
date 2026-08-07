@@ -13,7 +13,7 @@ def build_mail_client(config: Config) -> MailClient:
     if config.mail_backend == "outlook":
         from .outlook import OutlookMailClient
 
-        return OutlookMailClient()
+        return OutlookMailClient(min_image_bytes=config.attachment_min_image_bytes)
 
     from .fixture import FixtureMailClient
 

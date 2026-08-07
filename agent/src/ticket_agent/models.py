@@ -32,6 +32,10 @@ class RawMail:
     body_html: str | None = None
     folder: str | None = None
     attachments: list[Attachment] = field(default_factory=list)
+    #: 본문에 딸려 온 것이라 첨부에서 뺀 파일들의 **이름만**. 내용은 안 담습니다.
+    #: 이름이라도 남기는 이유는, 잘못 뺀 경우에 그 사실이 어디에도 안 남으면
+    #: 요청자가 다시 보내 줄 때까지 아무도 모르기 때문입니다.
+    skipped_inline: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
