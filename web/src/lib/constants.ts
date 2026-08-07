@@ -255,14 +255,19 @@ export const RULE_KIND_LABELS: Record<RuleKind, string> = {
  * `excluded` 와 `pending` 은 둘 다 티켓이 없지만 뜻이 정반대입니다.
  * 제외는 **판단이 끝난** 것이고, 판단 대기는 분류가 실패해 **시작도 못 한**
  * 것입니다. 하나로 합치면 "걸렀다" 안에 "모르겠다" 가 섞여 들어갑니다.
+ *
+ * `ticketed` 와 `linked` 도 다릅니다. 앞은 이 메일이 그 티켓이 **된** 것이고,
+ * 뒤는 기존 티켓에 코멘트로 **붙은** 것입니다. 합치면 "메일 한 통 = 티켓 한 건"
+ * 이라는 통계 전제가 조용히 깨집니다.
  */
-export const SCAN_OUTCOMES = ['ticketed', 'excluded', 'pending'] as const
+export const SCAN_OUTCOMES = ['ticketed', 'excluded', 'pending', 'linked'] as const
 export type ScanOutcome = (typeof SCAN_OUTCOMES)[number]
 
 export const SCAN_OUTCOME_LABELS: Record<ScanOutcome, string> = {
   ticketed: '티켓 생성됨',
   excluded: '제외됨',
   pending: '판단 대기',
+  linked: '후속 연결됨',
 }
 
 export const ROLES = ['admin', 'member'] as const

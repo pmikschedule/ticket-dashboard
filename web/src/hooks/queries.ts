@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import * as api from '../lib/api'
 import type { Resolution, ScanOutcome } from '../lib/constants'
-import type { TicketFilters, TicketMeta } from '../lib/types'
+import type { ScannedMail, TicketFilters, TicketMeta } from '../lib/types'
 
 export const keys = {
   tickets: (filters: TicketFilters) => ['tickets', filters] as const,
@@ -216,6 +216,36 @@ export function useClearSecret() {
 
 export function useScannedMails(filters: api.ScanFilters) {
   return useQuery({ queryKey: keys.scans(filters), queryFn: () => api.fetchScannedMails(filters) })
+}
+
+/** 후속 메일을 붙일 티켓 후보. 검색어가 비어도 최근 것을 보여 줍니다. */
+export function useLinkCandidates(term: string) {
+  return useQuery({
+    queryKey: ['link-candidates', term],
+    queryFn: () => api.searchTicketsForLink(term),
+  })
+}
+
+/** 후속 메일을 기존 티켓에 코멘트로 붙입니다. */
+export function useLinkScanToTicket() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({
+      scan,
+      ticketId,
+      userId,
+      note,
+    }: {
+      scan: ScannedMail
+      ticketId: number
+      userId: string
+      note?: string
+    }) => api.linkScanToTicket(scan, ticketId, userId, note),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['scans'] })
+      void queryClient.invalidateQueries({ queryKey: keys.comments(variables.ticketId) })
+    },
+  })
 }
 
 /** 처리 결과별 건수 — 스크리닝이 비어 보일 때 어디로 갔는지 알려 줍니다. */

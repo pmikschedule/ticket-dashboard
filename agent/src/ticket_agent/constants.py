@@ -98,10 +98,18 @@ FALLBACK_SYSTEM_TYPE: str | None = None
 SCAN_OUTCOME_TICKETED = "ticketed"
 SCAN_OUTCOME_EXCLUDED = "excluded"
 SCAN_OUTCOME_PENDING = "pending"
+#: 사람이 화면에서만 정합니다. 에이전트는 이 값을 쓰지 않습니다.
+SCAN_OUTCOME_LINKED = "linked"
 
-SCAN_OUTCOMES = (SCAN_OUTCOME_TICKETED, SCAN_OUTCOME_EXCLUDED, SCAN_OUTCOME_PENDING)
+SCAN_OUTCOMES = (
+    SCAN_OUTCOME_TICKETED,
+    SCAN_OUTCOME_EXCLUDED,
+    SCAN_OUTCOME_PENDING,
+    SCAN_OUTCOME_LINKED,
+)
 SCAN_OUTCOME_LABELS = {
     "ticketed": "티켓 생성됨",
     "excluded": "제외됨",
     "pending": "판단 대기",
+    "linked": "후속 연결됨",
 }

@@ -7,6 +7,7 @@
 
 import { SCAN_OUTCOMES } from './constants'
 import type { Resolution, ScanOutcome } from './constants'
+import { buildMailComment, parseTicketNumber } from './link'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
   AppSetting,
@@ -571,6 +572,68 @@ export async function countPendingScans(): Promise<number> {
     .is('reviewed_at', null)
   if (error) throw new Error(error.message)
   return count ?? 0
+}
+
+/**
+ * 후속 메일을 붙일 티켓 후보.
+ *
+ * 검색어가 없으면 최근 티켓을 그냥 보여 줍니다 — 빈 화면에서 시작하면 무엇을
+ * 쳐야 할지부터 생각해야 하고, 그 사이에 '새 티켓' 을 눌러 버립니다.
+ * 완료된 건도 빼지 않습니다. 뒤늦게 오는 연락이 있습니다.
+ */
+export async function searchTicketsForLink(term: string): Promise<TicketWithMeta[]> {
+  const number = parseTicketNumber(term)
+
+  let query = supabase.from('tickets').select(TICKET_ONE_SELECT)
+
+  if (number !== null) {
+    query = query.eq('id', number)
+  } else if (term.trim()) {
+    const safe = term.trim().replace(/[%,]/g, '')
+    query = query.or(`subject.ilike.%${safe}%,reporter_email.ilike.%${safe}%`)
+  }
+
+  const rows = unwrap(await query.order('received_at', { ascending: false }).limit(30)) as Record<
+    string,
+    unknown
+  >[]
+  return rows.map(normalizeMeta)
+}
+
+/**
+ * 후속 메일을 기존 티켓에 코멘트로 붙입니다.
+ *
+ * 티켓을 새로 만들지 않습니다. 같은 사안이 두 건으로 갈라지면 리드타임이 두 번
+ * 계산되고 요청자는 완료 회신을 두 번 받습니다.
+ *
+ * 코멘트를 먼저 넣고 스캔 기록을 나중에 고칩니다. 반대로 하면 코멘트 삽입이
+ * 실패했을 때 '붙였다' 고 기록된 티켓에 아무것도 없게 됩니다. 이 순서면 최악이
+ * '코멘트는 붙었는데 스캔이 미검토로 남는 것' 이고, 그건 화면에 보이는 상태라
+ * 사람이 다시 처리할 수 있습니다.
+ */
+export async function linkScanToTicket(
+  scan: ScannedMail,
+  ticketId: number,
+  userId: string,
+  note = '',
+): Promise<void> {
+  await addComment(ticketId, userId, buildMailComment(scan, note))
+
+  const { error } = await supabase
+    .from('scanned_mails')
+    .update({
+      outcome: 'linked',
+      ticket_id: ticketId,
+      reviewed_by: userId,
+      reviewed_at: new Date().toISOString(),
+      review_note: note.trim() || null,
+    })
+    .eq('id', scan.id)
+  if (error) {
+    throw new Error(
+      `코멘트는 티켓 #${ticketId} 에 붙었지만 스캔 기록 갱신에 실패했습니다: ${error.message}`,
+    )
+  }
 }
 
 /**

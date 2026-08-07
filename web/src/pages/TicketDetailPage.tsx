@@ -48,6 +48,7 @@ import {
   type Status,
 } from '../lib/constants'
 import { formatBytes, formatDate, formatDateTime } from '../lib/format'
+import { isMailComment } from '../lib/link'
 import {
   allowedTransitions,
   canAssign,
@@ -442,6 +443,19 @@ export default function TicketDetailPage() {
                     <span className="font-medium text-slate-700">
                       {comment.users?.name ?? '알 수 없음'}
                     </span>
+                    {/*
+                      메일에서 온 코멘트는 그 사람이 쓴 글이 아니라 옮겨 담은
+                      것입니다. 구분이 없으면 담당자가 요청자 말투로 쓴 것처럼
+                      읽히고, 나중에 누가 무엇을 말했는지가 흐려집니다.
+                    */}
+                    {isMailComment(comment.content) && (
+                      <span
+                        title="스크리닝에서 후속 메일을 붙인 것입니다"
+                        className="rounded bg-sky-50 px-1.5 py-0.5 text-[10px] font-medium text-sky-700"
+                      >
+                        메일
+                      </span>
+                    )}
                     <span>{formatDateTime(comment.created_at)}</span>
                     {canDeleteComment(user, comment.user_id) && (
                       <button

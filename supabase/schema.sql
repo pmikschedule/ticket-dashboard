@@ -1480,3 +1480,35 @@ $$;
 drop trigger if exists trg_tickets_guard_source on public.tickets;
 create trigger trg_tickets_guard_source before update on public.tickets
   for each row execute function public.guard_source_message_id();
+
+-- ============================================================================
+-- 21. 후속 메일은 새 티켓이 아니라 기존 티켓의 코멘트로 갑니다
+-- ============================================================================
+-- "아까 그 건 추가 정보입니다" 같은 메일이 새 티켓이 되면 같은 사안이 두 건으로
+-- 갈라집니다. 리드타임도 두 번 계산되고, 요청자는 완료 회신을 두 번 받습니다.
+--
+-- 판정은 **사람이 합니다.** LLM 이 제안하고 사람이 확정하는 방식도 검토했지만,
+-- 틀린 제안은 없는 제안보다 나쁩니다 — 사람이 확인하지 않고 누르기 때문입니다.
+-- 대신 화면에서 티켓을 빨리 찾을 수 있게 하는 데 힘을 씁니다.
+--
+-- outcome 에 네 번째 값을 둡니다. ticket_id 는 그대로 쓰되 뜻이 다릅니다.
+--
+--   ticketed  이 메일이 그 티켓이 **됐다**
+--   linked    이 메일이 그 티켓에 **붙었다** (코멘트로)
+--
+-- 둘을 안 가르면 "메일 한 통 = 티켓 한 건" 이라는 통계 전제가 조용히 깨집니다.
+-- ----------------------------------------------------------------------------
+alter table public.scanned_mails drop constraint if exists scanned_mails_outcome_check;
+alter table public.scanned_mails add constraint scanned_mails_outcome_check
+  check (outcome in ('ticketed', 'excluded', 'pending', 'linked'));
+
+comment on column public.scanned_mails.outcome is
+  'ticketed=티켓이 됨 · excluded=요청이 아니라 걸러짐 · pending=분류 실패라 사람이 정해야 함 · linked=기존 티켓에 코멘트로 붙음';
+
+comment on column public.scanned_mails.ticket_id is
+  'outcome=ticketed 면 이 메일로 만들어진 티켓, linked 면 이 메일을 붙인 티켓';
+
+-- 코멘트는 팀원 누구나 답니다. 스크리닝에서 메일을 붙이는 것도 코멘트이므로
+-- 여기서 막히면 연결이 안 됩니다. (기존 comments 정책과 같은 내용을 재확인)
+create index if not exists idx_scanned_linked
+  on public.scanned_mails (ticket_id) where (outcome = 'linked');

@@ -2,13 +2,17 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import { useAuth } from '../hooks/useAuth'
+import { StatusBadge } from '../components/Badge'
 import {
   useConvertScanToTicket,
+  useLinkCandidates,
+  useLinkScanToTicket,
   useMarkReviewed,
   useScanOutcomeCounts,
   useScannedMails,
   useSystemLabels,
 } from '../hooks/queries'
+import { rankLinkCandidates } from '../lib/link'
 import {
   SCAN_OUTCOMES,
   SCAN_OUTCOME_LABELS,
@@ -44,6 +48,7 @@ export default function ScreeningPage() {
   const { data: outcomeCounts } = useScanOutcomeCounts()
   const markReviewed = useMarkReviewed()
   const convert = useConvertScanToTicket()
+  const link = useLinkScanToTicket()
 
   // 지금 필터 밖에 쌓여 있는 것들. 목록이 비었을 때만 씁니다.
   const elsewhere = SCAN_OUTCOMES.filter((key) => key !== outcome)
@@ -94,6 +99,7 @@ export default function ScreeningPage() {
             <option value="pending">판단 대기</option>
             <option value="excluded">제외됨</option>
             <option value="ticketed">티켓 생성됨</option>
+            <option value="linked">후속 연결됨</option>
             <option value="all">전체</option>
           </select>
         </div>
@@ -286,14 +292,14 @@ export default function ScreeningPage() {
               <div className="border-t border-slate-100 pt-4">
                 {selected.ticket_id ? (
                   <p className="text-sm text-slate-600">
-                    티켓{' '}
+                    {selected.outcome === 'linked' ? '후속 메일로 티켓 ' : '티켓 '}
                     <Link
                       to={`/tickets/${selected.ticket_id}`}
                       className="font-medium text-slate-900 hover:underline"
                     >
                       #{selected.ticket_id}
-                    </Link>{' '}
-                    으로 등록됐습니다.
+                    </Link>
+                    {selected.outcome === 'linked' ? ' 에 붙었습니다.' : ' 으로 등록됐습니다.'}
                   </p>
                 ) : !isAdmin ? (
                   <p className="text-xs text-slate-500">
@@ -302,6 +308,14 @@ export default function ScreeningPage() {
                 ) : (
                   <ConvertPanel
                     scan={selected}
+                    linking={link.isPending}
+                    onLink={(ticketId, note) => {
+                      if (!user) return
+                      link.mutate(
+                        { scan: selected, ticketId, userId: user.id, note },
+                        { onSuccess: () => setSelected(null), onError: fail },
+                      )
+                    }}
                     onConvert={(workType) => {
                       if (!user) return
                       convert.mutate(
@@ -342,57 +356,245 @@ export default function ScreeningPage() {
   )
 }
 
+/**
+ * 판단 패널.
+ *
+ * 갈 곳은 셋뿐입니다 — 새 티켓, 기존 티켓의 후속, 접수 안 함. 예전에는 앞의
+ * 둘이 구분되지 않아 후속 메일도 새 티켓이 됐고, 같은 사안이 두 건으로
+ * 갈라졌습니다.
+ *
+ * 셋을 한 줄에 나란히 두는 대신 **먼저 고르게** 합니다. 각 갈래에 필요한
+ * 입력이 다른데(새 티켓은 대분류, 후속은 티켓 검색) 그것을 다 펼쳐 두면
+ * 무엇을 정해야 하는지가 안 보입니다.
+ */
 function ConvertPanel({
   scan,
   onConvert,
+  onLink,
   onConfirmExclusion,
+  linking,
 }: {
   scan: ScannedMail
   onConvert: (workType: string) => void
+  onLink: (ticketId: number, note: string) => void
   onConfirmExclusion: () => void
+  linking: boolean
 }) {
+  const [choice, setChoice] = useState<'new' | 'follow' | 'skip' | null>(null)
   const [workType, setWorkType] = useState('maintenance')
   const isPending = scan.outcome === 'pending'
+
+  const CHOICES = [
+    {
+      key: 'new' as const,
+      label: '새 요청',
+      hint: '티켓을 새로 만듭니다',
+    },
+    {
+      key: 'follow' as const,
+      label: '진행 중인 건의 후속',
+      hint: '기존 티켓에 코멘트로 붙입니다',
+    },
+    {
+      key: 'skip' as const,
+      label: '접수 안 함',
+      hint: '요청이 아닙니다',
+    },
+  ]
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-600">
         {isPending
-          ? '자동 분류가 실패해 요청 여부를 판단하지 못했습니다. 원문을 보고 접수할지 정하세요.'
-          : 'LLM 이 요청이 아니라고 판단했습니다. 실제로는 요청이라면 티켓으로 되살리세요.'}
+          ? '자동 분류가 실패해 요청 여부를 판단하지 못했습니다. 원문을 보고 정하세요.'
+          : 'LLM 이 요청이 아니라고 판단했습니다. 실제로 어느 쪽인지 정하세요.'}
       </p>
 
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="w-40">
-          <label className="label" htmlFor="convert-work-type">
-            대분류
-          </label>
-          <select
-            id="convert-work-type"
-            className="field"
-            value={workType}
-            onChange={(event) => setWorkType(event.target.value)}
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        {CHOICES.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            onClick={() => setChoice(item.key)}
+            className={`rounded-md border p-2 text-left transition ${
+              choice === item.key
+                ? 'border-slate-900 bg-slate-900 text-white'
+                : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400'
+            }`}
           >
-            {WORK_TYPES.filter((w) => w !== 'development').map((w) => (
-              <option key={w} value={w}>
-                {WORK_TYPE_LABELS[w]}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <button type="button" className="btn-primary" onClick={() => onConvert(workType)}>
-          {isPending ? '접수 (티켓 생성)' : '티켓으로 전환'}
-        </button>
-        <button type="button" className="btn-secondary" onClick={onConfirmExclusion}>
-          {isPending ? '접수 안 함' : '판정이 맞음 (검토 완료)'}
-        </button>
+            <span className="block text-sm font-medium">{item.label}</span>
+            <span
+              className={`block text-[11px] ${
+                choice === item.key ? 'text-slate-300' : 'text-slate-400'
+              }`}
+            >
+              {item.hint}
+            </span>
+          </button>
+        ))}
       </div>
 
+      {choice === 'new' && (
+        <div className="space-y-2 rounded-md bg-slate-50 p-3">
+          <div className="flex flex-wrap items-end gap-2">
+            <div className="w-40">
+              <label className="label" htmlFor="convert-work-type">
+                대분류
+              </label>
+              <select
+                id="convert-work-type"
+                className="field"
+                value={workType}
+                onChange={(event) => setWorkType(event.target.value)}
+              >
+                {WORK_TYPES.filter((w) => w !== 'development').map((w) => (
+                  <option key={w} value={w}>
+                    {WORK_TYPE_LABELS[w]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button type="button" className="btn-primary" onClick={() => onConvert(workType)}>
+              티켓 생성
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            <strong>Triage</strong> 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시 티켓이 되지는
+            않습니다.
+          </p>
+        </div>
+      )}
+
+      {choice === 'follow' && <LinkPanel scan={scan} onLink={onLink} busy={linking} />}
+
+      {choice === 'skip' && (
+        <div className="space-y-2 rounded-md bg-slate-50 p-3">
+          <button type="button" className="btn-secondary" onClick={onConfirmExclusion}>
+            접수 안 함으로 확정
+          </button>
+          <p className="text-[11px] text-slate-400">
+            티켓을 만들지 않습니다. 원문은 이 화면에 계속 남으므로 나중에 되살릴 수 있습니다.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 후속으로 붙일 티켓 고르기.
+ *
+ * 검색어가 비어 있어도 최근 티켓을 보여 줍니다. 빈 목록에서 시작하면 무엇을
+ * 쳐야 할지부터 생각해야 하고, 그러느니 '새 요청' 을 눌러 버립니다.
+ * 같은 요청자의 안 끝난 건을 위로 올려 두는 것도 같은 이유입니다.
+ */
+function LinkPanel({
+  scan,
+  onLink,
+  busy,
+}: {
+  scan: ScannedMail
+  onLink: (ticketId: number, note: string) => void
+  busy: boolean
+}) {
+  const [term, setTerm] = useState('')
+  const [picked, setPicked] = useState<number | null>(null)
+  const [note, setNote] = useState('')
+  const { data: tickets = [], isLoading } = useLinkCandidates(term)
+
+  const candidates = rankLinkCandidates(tickets, scan.sender_email).slice(0, 8)
+
+  return (
+    <div className="space-y-3 rounded-md bg-slate-50 p-3">
+      <div>
+        <label className="label" htmlFor="link-search">
+          붙일 티켓
+        </label>
+        <input
+          id="link-search"
+          type="search"
+          className="field"
+          placeholder="티켓 번호(#42) 또는 제목·요청자"
+          value={term}
+          onChange={(event) => {
+            setTerm(event.target.value)
+            setPicked(null)
+          }}
+        />
+      </div>
+
+      {isLoading && <p className="text-xs text-slate-400">찾는 중…</p>}
+
+      {!isLoading && candidates.length === 0 && (
+        <p className="text-xs text-slate-400">
+          조건에 맞는 티켓이 없습니다. 번호를 알면 <code>#42</code> 처럼 입력하세요.
+        </p>
+      )}
+
+      <ul className="max-h-56 space-y-1 overflow-auto">
+        {candidates.map((ticket) => {
+          const active = picked === ticket.id
+          const sameReporter =
+            (ticket.reporter_email || '').toLowerCase() ===
+            (scan.sender_email || '').toLowerCase()
+          return (
+            <li key={ticket.id}>
+              <button
+                type="button"
+                onClick={() => setPicked(ticket.id)}
+                className={`w-full rounded-md border p-2 text-left transition ${
+                  active
+                    ? 'border-slate-900 ring-1 ring-slate-900'
+                    : 'border-slate-200 bg-white hover:border-slate-400'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-slate-500">#{ticket.id}</span>
+                  {ticket.ticket_meta && <StatusBadge status={ticket.ticket_meta.status} />}
+                  {sameReporter && (
+                    <span
+                      title="이 메일의 발신자가 이 티켓의 요청자입니다"
+                      className="rounded bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700"
+                    >
+                      같은 요청자
+                    </span>
+                  )}
+                </span>
+                <span className="mt-0.5 block truncate text-sm text-slate-800">
+                  {ticket.subject}
+                </span>
+              </button>
+            </li>
+          )
+        })}
+      </ul>
+
+      <div>
+        <label className="label" htmlFor="link-note">
+          덧붙일 메모 (선택)
+        </label>
+        <input
+          id="link-note"
+          className="field"
+          placeholder="예: 요청자에게 전화로 재확인함"
+          value={note}
+          onChange={(event) => setNote(event.target.value)}
+        />
+      </div>
+
+      <button
+        type="button"
+        className="btn-primary"
+        disabled={picked === null || busy}
+        onClick={() => picked !== null && onLink(picked, note)}
+      >
+        {busy ? '붙이는 중…' : picked === null ? '티켓을 고르세요' : `#${picked} 에 코멘트로 붙이기`}
+      </button>
+
       <p className="text-[11px] text-slate-400">
-        전환하면 <strong>Triage</strong> 상태로 들어갑니다. 같은 메일이 다음 스캔에서 다시
-        티켓이 되지는 않습니다 (메일 ID {scan.message_id} 기준).
-        {isPending && ' 접수하지 않아도 원문은 이 화면에 계속 남습니다.'}
+        메일 제목·발신자·수신일시와 본문이 코멘트로 들어갑니다. 티켓은 새로 만들지 않습니다.
+        <strong> 메일에 붙어 있던 파일은 함께 옮겨지지 않습니다</strong> — 필요하면 티켓 상세에서
+        직접 올리세요.
       </p>
     </div>
   )
