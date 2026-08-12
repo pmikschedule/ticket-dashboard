@@ -210,9 +210,16 @@ export async function updateTicketMeta(
  * 그대로 남아 증적이 됩니다 (`fetchOriginalMail`). 그래서 여기서 마음 놓고
  * 고칠 수 있습니다 — 원본이 안 남으면 고치는 것 자체가 위험한 일이 됩니다.
  *
- * `received_at`(접수일)과 `source_message_id`(중복 판정 키)는 일부러 뺐습니다.
- * 접수일은 판단이 아니라 사실이고 리드타임의 기준이며, message_id 를 바꾸면
- * 같은 메일이 다시 티켓이 됩니다. 후자는 DB 트리거도 함께 막습니다.
+ * `received_at`(접수일)도 고칠 수 있습니다. 메일보다 먼저 전화로 접수된 건,
+ * 수동 등록에서 등록 시각이 그대로 접수일이 된 건처럼 **받은 날과 적힌 날이
+ * 다른 경우**가 실제로 있고, 그때 접수일이 고정이면 리드타임이 통째로
+ * 틀립니다. 다만 그 값은 리드타임·MTTA·MTTR 의 기준점이므로 아무 값이나
+ * 받지는 않습니다 — 미래 접수일은 `receivedAtError()` 와 `guard_received_at()`
+ * 트리거가 함께 막습니다. 원본 메일의 수신일시는 `scanned_mails` 에 그대로
+ * 남아 무엇을 고쳤는지 대조할 수 있습니다.
+ *
+ * `source_message_id`(중복 판정 키)는 여전히 뺐습니다. 바꾸면 같은 메일이
+ * 다시 티켓이 됩니다. 이것도 DB 트리거가 함께 막습니다.
  */
 export async function updateTicketFields(
   ticketId: number,
@@ -221,6 +228,7 @@ export async function updateTicketFields(
     description?: string
     reporter_name?: string | null
     reporter_email?: string
+    received_at?: string
     due_date?: string | null
     planned_start_date?: string | null
     planned_end_date?: string | null

@@ -47,7 +47,13 @@ import {
   WORK_TYPE_LABELS,
   type Status,
 } from '../lib/constants'
-import { formatBytes, formatDate, formatDateTime } from '../lib/format'
+import {
+  formatBytes,
+  formatDate,
+  formatDateTime,
+  fromDateTimeInput,
+  toDateTimeInput,
+} from '../lib/format'
 import { isMailComment } from '../lib/link'
 import {
   allowedTransitions,
@@ -56,6 +62,7 @@ import {
   canDeleteComment,
   canDeleteTicket,
   isOverdue,
+  receivedAtError,
   requiresHoldReason,
   requiresResolution,
 } from '../lib/workflow'
@@ -88,6 +95,7 @@ export default function TicketDetailPage() {
   const [draftSubject, setDraftSubject] = useState('')
   const [draftDescription, setDraftDescription] = useState('')
   const [draftDue, setDraftDue] = useState('')
+  const [draftReceivedAt, setDraftReceivedAt] = useState('')
   const [draftReporterName, setDraftReporterName] = useState('')
   const [draftReporterEmail, setDraftReporterEmail] = useState('')
   // 기본은 접힘. 평소에 볼 것은 정리된 티켓이고, 원본은 대조가 필요할 때만
@@ -128,9 +136,40 @@ export default function TicketDetailPage() {
     setDraftSubject(ticket.subject)
     setDraftDescription(ticket.description)
     setDraftDue(ticket.due_date ?? '')
+    setDraftReceivedAt(toDateTimeInput(ticket.received_at))
     setDraftReporterName(ticket.reporter_name ?? '')
     setDraftReporterEmail(ticket.reporter_email)
     setEditing(true)
+  }
+
+  function saveEdits() {
+    if (!ticket) return
+    // 접수일은 리드타임·MTTA/MTTR 의 기준점입니다. 미래로 적히면 경과 시간이
+    // 음수가 되고 화면이 그걸 '-' 로 지워 버려 아무도 눈치채지 못합니다.
+    // DB 트리거도 같은 값을 막지만, 거기까지 가면 나머지 수정도 함께 날아갑니다.
+    const nextReceivedAt = fromDateTimeInput(draftReceivedAt)
+    const receivedError = receivedAtError(nextReceivedAt)
+    if (receivedError !== null || nextReceivedAt === null) {
+      setActionError(receivedError)
+      return
+    }
+    setActionError(null)
+    updateFields.mutate(
+      {
+        ticketId: ticket.id,
+        patch: {
+          subject: draftSubject.trim() || ticket.subject,
+          description: draftDescription,
+          received_at: nextReceivedAt,
+          due_date: draftDue || null,
+          reporter_name: draftReporterName.trim() || null,
+          // 빈 값으로 저장하면 회신할 곳이 없어집니다.
+          // 안 적었으면 고치지 않은 것으로 봅니다.
+          reporter_email: draftReporterEmail.trim() || ticket.reporter_email,
+        },
+      },
+      { onSuccess: () => setEditing(false), onError: fail },
+    )
   }
 
   async function openAttachment(path: string) {
@@ -183,7 +222,7 @@ export default function TicketDetailPage() {
                     onChange={(event) => setDraftSubject(event.target.value)}
                   />
                 </div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <label className="label" htmlFor="edit-reporter-name">
                       요청자
@@ -209,6 +248,18 @@ export default function TicketDetailPage() {
                     />
                   </div>
                   <div>
+                    <label className="label" htmlFor="edit-received-at">
+                      접수일
+                    </label>
+                    <input
+                      id="edit-received-at"
+                      type="datetime-local"
+                      className="field"
+                      value={draftReceivedAt}
+                      onChange={(event) => setDraftReceivedAt(event.target.value)}
+                    />
+                  </div>
+                  <div>
                     <label className="label" htmlFor="edit-due">
                       요청 기한
                     </label>
@@ -221,6 +272,17 @@ export default function TicketDetailPage() {
                     />
                   </div>
                 </div>
+                {/*
+                  접수일은 표시용 날짜가 아니라 리드타임·MTTA/MTTR 의 기준점입니다.
+                  고칠 수 있어야 하는 이유(메일보다 먼저 전화로 들어온 건, 수동
+                  등록에서 등록 시각이 접수일이 된 건)와 고치면 무엇이 따라
+                  움직이는지를 같이 적어 둡니다.
+                */}
+                <p className="text-[11px] text-slate-400">
+                  <strong>접수일</strong>을 고치면 리드타임·MTTA/MTTR·주간 집계가 함께
+                  바뀝니다. 메일보다 먼저 접수된 건을 실제 접수 시점으로 맞출 때 쓰세요.
+                  미래 시각은 저장되지 않습니다.
+                </p>
                 {/*
                   완료 회신이 여기 적힌 주소로 갑니다. 대리 발송을 실제 요청자로
                   고치는 것이 이 칸의 쓸모인데, 잘못 고치면 엉뚱한 사람에게
@@ -242,28 +304,7 @@ export default function TicketDetailPage() {
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary"
-                    onClick={() =>
-                      updateFields.mutate(
-                        {
-                          ticketId: ticket.id,
-                          patch: {
-                            subject: draftSubject.trim() || ticket.subject,
-                            description: draftDescription,
-                            due_date: draftDue || null,
-                            reporter_name: draftReporterName.trim() || null,
-                            // 빈 값으로 저장하면 회신할 곳이 없어집니다.
-                            // 안 적었으면 고치지 않은 것으로 봅니다.
-                            reporter_email:
-                              draftReporterEmail.trim() || ticket.reporter_email,
-                          },
-                        },
-                        { onSuccess: () => setEditing(false), onError: fail },
-                      )
-                    }
-                  >
+                  <button type="button" className="btn-primary" onClick={saveEdits}>
                     저장
                   </button>
                   <button type="button" className="btn-secondary" onClick={() => setEditing(false)}>
@@ -351,6 +392,18 @@ export default function TicketDetailPage() {
                       <dd className="text-slate-800">
                         {formatDateTime(originalMail.received_at)}
                       </dd>
+                      {/*
+                        접수일을 고칠 수 있게 되면서 "메일이 온 시각" 과 "접수로
+                        치는 시각" 이 갈라질 수 있습니다. 갈라졌다는 사실이
+                        안 보이면 리드타임이 왜 그 값인지 설명할 수 없습니다.
+                      */}
+                      {originalMail.received_at &&
+                        Date.parse(originalMail.received_at) !==
+                          Date.parse(ticket.received_at) && (
+                          <dd className="mt-0.5 text-[11px] text-amber-700">
+                            티켓 접수일은 {formatDateTime(ticket.received_at)} 로 조정됐습니다.
+                          </dd>
+                        )}
                     </div>
                     <div>
                       <dt className="text-slate-500">폴더</dt>

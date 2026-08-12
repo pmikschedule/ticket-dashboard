@@ -71,6 +71,33 @@ export function requiresResolution(next: Status): boolean {
   return next === 'done'
 }
 
+/**
+ * 시계 오차 허용치. 사용자 PC 가 몇 분 빠른 것은 오기가 아닙니다.
+ * schema.sql 23장 트리거의 `interval '5 minutes'` 와 같은 값이어야 합니다.
+ */
+export const RECEIVED_AT_SKEW_MINUTES = 5
+
+/**
+ * 접수일 검증 — 문제가 있으면 사람이 읽을 이유를, 없으면 null 을 돌려줍니다.
+ *
+ * 접수일은 리드타임·MTTA·MTTR 의 기준점입니다. 미래로 적히면 모든 경과
+ * 시간이 음수가 되고, 화면은 음수를 '-' 로 지워 버려서 **틀렸다는 사실조차
+ * 안 보입니다.** 그래서 미래만 막습니다 — 과거는 오히려 고치는 목적입니다
+ * (메일 전에 전화로 접수된 건 등).
+ *
+ * 같은 규칙이 `guard_received_at()` 트리거에도 있고 내용이 같아야 합니다.
+ * 여기서 막는 것은 편의고 실제 차단은 DB 입니다.
+ */
+export function receivedAtError(value: string | null, now: Date = new Date()): string | null {
+  if (!value) return '접수일은 비울 수 없습니다.'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '접수일을 읽을 수 없습니다.'
+  if (date.getTime() > now.getTime() + RECEIVED_AT_SKEW_MINUTES * 60_000) {
+    return '접수일을 미래로 둘 수 없습니다.'
+  }
+  return null
+}
+
 export function isAdmin(user: AppUser | null | undefined): boolean {
   return !!user && user.role === 'admin' && user.is_active
 }

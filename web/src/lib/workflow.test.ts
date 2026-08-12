@@ -10,6 +10,8 @@ import {
   canSendReply,
   isAdmin,
   isOverdue,
+  receivedAtError,
+  RECEIVED_AT_SKEW_MINUTES,
   requiresHoldReason,
   requiresResolution,
 } from './workflow'
@@ -193,5 +195,28 @@ describe('보류(on_hold) 전이', () => {
     expect(requiresHoldReason('in_progress')).toBe(false)
     expect(requiresResolution('done')).toBe(true)
     expect(requiresResolution('on_hold')).toBe(false)
+  })
+})
+
+describe('receivedAtError', () => {
+  const now = new Date('2026-08-10T12:00:00Z')
+
+  it('과거 접수일은 통과합니다 — 그게 고치는 목적입니다', () => {
+    expect(receivedAtError('2026-07-01T09:00:00Z', now)).toBeNull()
+  })
+
+  it('미래 접수일은 막습니다 — 리드타임이 음수가 되고 화면은 그걸 지웁니다', () => {
+    expect(receivedAtError('2026-08-11T09:00:00Z', now)).not.toBeNull()
+  })
+
+  it('시계 오차만큼은 봐 줍니다', () => {
+    const skew = RECEIVED_AT_SKEW_MINUTES * 60_000
+    expect(receivedAtError(new Date(now.getTime() + skew - 1000).toISOString(), now)).toBeNull()
+    expect(receivedAtError(new Date(now.getTime() + skew + 60_000).toISOString(), now)).not.toBeNull()
+  })
+
+  it('빈 값·깨진 값', () => {
+    expect(receivedAtError(null, now)).not.toBeNull()
+    expect(receivedAtError('어제', now)).not.toBeNull()
   })
 })

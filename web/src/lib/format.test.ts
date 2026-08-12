@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 
-import { daysSince, formatBytes, formatHours, initials, relativeDays } from './format'
+import {
+  daysSince,
+  formatBytes,
+  formatHours,
+  fromDateTimeInput,
+  initials,
+  relativeDays,
+  toDateTimeInput,
+} from './format'
 
 describe('formatHours', () => {
   it('1시간 미만은 분', () => expect(formatHours(0.5)).toBe('30분'))
@@ -29,6 +37,35 @@ describe('daysSince / relativeDays', () => {
   })
   it('null', () => expect(relativeDays(null, today)).toBe('-'))
   it('깨진 값', () => expect(daysSince('어제', today)).toBeNull())
+})
+
+describe('toDateTimeInput / fromDateTimeInput', () => {
+  // 테스트가 도는 시간대를 모르므로 '왕복하면 같은 시각' 으로 검증합니다.
+  // 두 함수 중 한쪽만 로컬/UTC 를 잘못 다루면 여기서 어긋납니다.
+  it('왕복하면 같은 시각 (분 단위)', () => {
+    const iso = '2026-08-05T09:34:00.000Z'
+    expect(fromDateTimeInput(toDateTimeInput(iso))).toBe(iso)
+  })
+
+  it('입력 칸 모양은 분까지, 초·Z 는 없습니다', () => {
+    expect(toDateTimeInput('2026-08-05T09:34:56.000Z')).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/,
+    )
+  })
+
+  it('초는 버립니다 — 칸이 분 단위입니다', () => {
+    expect(fromDateTimeInput(toDateTimeInput('2026-08-05T09:34:56.000Z'))).toBe(
+      '2026-08-05T09:34:00.000Z',
+    )
+  })
+
+  it('빈 값·깨진 값', () => {
+    expect(toDateTimeInput(null)).toBe('')
+    expect(toDateTimeInput('어제')).toBe('')
+    expect(fromDateTimeInput('')).toBeNull()
+    expect(fromDateTimeInput('   ')).toBeNull()
+    expect(fromDateTimeInput('2026-13-99T99:99')).toBeNull()
+  })
 })
 
 describe('initials', () => {

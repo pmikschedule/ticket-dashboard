@@ -1591,3 +1591,53 @@ drop policy if exists meta_insert_admin  on public.ticket_meta;
 drop policy if exists meta_insert_member on public.ticket_meta;
 create policy meta_insert_member on public.ticket_meta
   for insert with check (public.is_member());
+
+-- ============================================================================
+-- 23. 접수일은 고칠 수 있되, 미래로는 못 갑니다
+-- ============================================================================
+-- 접수일(received_at)은 오래 고정값이었습니다. "받은 사실" 이니 판단이 아니고,
+-- 리드타임의 기준점이니 함부로 움직이면 안 된다고 봤기 때문입니다.
+--
+-- 그런데 받은 날과 접수로 쳐야 할 날이 다른 경우가 실제로 있습니다.
+--
+--   · 전화로 먼저 접수하고 메일은 며칠 뒤에 온 건
+--   · 수동 등록에서 등록 시각이 그대로 접수일이 된 건
+--   · 후속 메일이 새 티켓이 됐다가 원래 건으로 정리된 경우
+--
+-- 이때 접수일이 고정이면 리드타임이 통째로 틀립니다. 틀린 값을 못 고치게 막는
+-- 것은 정확성을 지키는 게 아니라 틀린 채로 굳히는 것입니다. 그래서 엽니다.
+-- 권한은 다른 티켓 필드와 같습니다 (can_edit_ticket — 담당자와 관리자).
+--
+-- 대신 **미래**만 막습니다. 미래 접수일은 경과 시간을 전부 음수로 만들고,
+-- 화면·집계는 음수를 '-' 로 지워 버립니다 — 틀렸다는 사실조차 안 보입니다.
+-- 과거로 옮기는 것은 오히려 이 기능의 목적이라 막지 않습니다.
+--
+--   · update 에서만 봅니다. insert 까지 막으면 발신자 시계가 어긋난 메일 하나로
+--     스크리닝의 '접수' 버튼이 통째로 실패합니다. 그건 여기서 다룰 문제가 아닙니다.
+--   · 값이 안 바뀐 update 는 통과시킵니다. 이미 미래로 적힌 옛 티켓의
+--     제목조차 못 고치게 되면 고칠 방법이 사라집니다.
+--   · 5분은 시계 오차 몫입니다. 사용자 PC 가 몇 분 빠른 것은 오기가 아닙니다.
+--     web/src/lib/workflow.ts 의 RECEIVED_AT_SKEW_MINUTES 와 같은 값입니다.
+--   · 에이전트(service_role)와 SQL Editor 는 auth.uid() 가 null 이라 통과시킵니다.
+-- ----------------------------------------------------------------------------
+create or replace function public.guard_received_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+  if new.received_at is distinct from old.received_at
+     and new.received_at > now() + interval '5 minutes' then
+    raise exception '접수일을 미래로 둘 수 없습니다';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_tickets_guard_received on public.tickets;
+create trigger trg_tickets_guard_received before update on public.tickets
+  for each row execute function public.guard_received_at();
