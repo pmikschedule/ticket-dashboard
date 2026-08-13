@@ -30,14 +30,15 @@ Node 22 이상이 필요합니다 (`node:sqlite` 를 씁니다).
 
 ```bash
 npm run doctor            # 설정·연결·쿠키 만료 점검
-npm run scan              # desk 를 읽어 오늘자 스냅샷 저장
+npm run scan              # desk 를 읽어 스냅샷 저장 + 대시보드 업로드
+npm run push              # 밀린 스냅샷·태스크 맵만 올리기
 npm run weekly            # 주간 업무 보고 (기본: 방금 끝난 화~월 구간)
 npm run weekly 2026-08-10 # 특정 주 — 끝나는 **월요일**로 지정
 npm run monthly           # 지난달 보고서 생성
 npm run monthly 2026-08   # 특정 달
 npm run list              # 업무 전수 목록 xlsx (프로젝트별 · 담당자별)
 npm run ui                # 태스크 맵 편집 화면 (127.0.0.1:4173)
-npm test                  # 집계·레이아웃 225개 + 타입체크
+npm test                  # 집계·레이아웃 229개 + 타입체크
 ```
 
 터미널을 안 쓸 때는 **`start-reporter.command` 를 더블클릭**합니다. Node 버전과
@@ -78,9 +79,27 @@ desk 는 Cloudflare Access 뒤에 있고 Service Token 이 발급돼 있지 않�
 
 ## 대시보드 접근
 
-Publishable(anon) 키로 **로그인해서** 읽습니다. RLS 가 그대로 살아 있습니다.
+Publishable(anon) 키로 **로그인해서** 읽고 씁니다. RLS 가 그대로 살아 있습니다.
 `service_role` 키는 쓰지 않습니다 — 그 키는 에이전트 PC 의 `.env` 한 곳에만
 있어야 합니다.
+
+### 스냅샷을 대시보드로 올립니다
+
+`scan` 이 끝나면 **로컬에 있는데 대시보드에 없는 날짜만** 올립니다
+(`desk_snapshots` · `task_map`, `supabase/schema.sql` 24장). 이미 올린 것을 매번
+다시 올리면 스냅샷 하나가 수백 KB 라 스캔마다 몇 MB 를 왕복합니다.
+
+**업로드가 실패해도 스캔은 성공입니다.** 스냅샷은 로컬에 남아 있고 나중에
+`npm run push` 로 올리면 됩니다. 여기서 멈추면 그날 수집까지 실패한 것처럼
+보이는데, 스냅샷은 놓치면 복원이 안 되는 쪽이라 그렇게 두면 안 됩니다.
+
+> 표를 아직 안 만들었으면 `Could not find the table 'public.desk_snapshots'` 가
+> 납니다. Supabase SQL Editor 에서 `supabase/schema.sql` 을 다시 실행하세요
+> (한 파일이고 재실행해도 안전합니다).
+
+쓰기는 **관리자 계정만** 통과합니다. 스냅샷은 그 Mac 한 대만 올리면 되고,
+태스크 맵은 팀 전체 보고서의 모양을 바꾸는 규칙이라 아무나 고치면 매주 다른
+보고서가 나갑니다.
 
 **대분류 3종을 전부 읽습니다** — `ticket_meta.work_type` 의 `incident`(장애) ·
 `maintenance`(유지보수) · `development`(신규개발). `category`(오류·개선·수정·신규)
@@ -440,6 +459,7 @@ src/xlsx.ts        xlsx 그리기 — 계산하지 않습니다
 src/cookie.ts      Chrome 쿠키 추출·복호화
 src/desk.ts        /api/state 수집·스냅샷
 src/dashboard.ts   Supabase 티켓 조회 (대분류 3종)
+src/upload.ts      스냅샷·태스크 맵 업로드 — 이 도구가 쓰는 유일한 곳
 src/cli.ts         scan · weekly · monthly · list · ui · doctor
 ```
 

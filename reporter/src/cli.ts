@@ -2,7 +2,8 @@
 /**
  * CLI — `doctor` · `scan` · `weekly` · `monthly` · `list` · `ui`.
  *
- *   scan             desk 를 읽어 오늘자 스냅샷을 남깁니다 (주 1회 이상 권장)
+ *   scan             desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
+ *   push             밀린 스냅샷·태스크 맵을 대시보드에 올립니다 (scan 없이)
  *   weekly [YYYY-MM-DD] 주간 업무 보고 pptx (화~월 구간, 끝나는 월요일로 지정)
  *   monthly [YYYY-MM] 그 달의 보고서 pptx 를 만듭니다 (기본: 지난달)
  *   list             업무 전수 목록 xlsx 를 만듭니다 (프로젝트별 · 담당자별)
@@ -20,6 +21,7 @@ import {
   listSnapshots,
   makeSnapshot,
   previousDueDates,
+  readSnapshot,
   saveSnapshot,
   snapshotAfter,
   snapshotBefore,
@@ -35,6 +37,7 @@ import { writeWeekly } from './weeklyRender.ts'
 import { currentWeek, nextWeek, parseWeekLabel, rangeLabel } from './week.ts'
 import { applyTaskMap, loadTaskMap, mapFootnotes } from './taskmap.ts'
 import { startUi } from './ui.ts'
+import { uploadSnapshot, uploadTaskMap, uploadedDays } from './upload.ts'
 import { writeWorkList } from './xlsx.ts'
 import type { TicketRow } from './types.ts'
 
@@ -91,6 +94,59 @@ async function cmdScan() {
   say(`  원본시각: ${snap.meta.sourceUpdatedAt ?? '(없음)'}`)
   say(`  저장   : ${path}`)
   say(`  누적   : 스냅샷 ${listSnapshots(cfg.snapshotDir).length}개`)
+
+  // 업로드가 실패해도 **스캔은 성공입니다.** 스냅샷은 로컬에 남았고 나중에
+  // `push` 로 올릴 수 있습니다. 여기서 죽으면 그날 수집까지 실패한 것처럼 보입니다.
+  await pushAll({ quiet: true })
+}
+
+/**
+ * 대시보드에 올립니다.
+ *
+ * **로컬 파일이 원본이고 대시보드가 사본입니다.** 로컬에 있는데 대시보드에 없는
+ * 날짜만 올립니다 — 이미 올린 것을 매번 다시 올리면 스냅샷 하나가 수백 KB 라
+ * 스캔마다 몇 MB 를 왕복하게 됩니다.
+ */
+async function pushAll(opt: { quiet?: boolean } = {}) {
+  if (!cfg.supabaseUrl || !cfg.supabaseEmail) {
+    if (!opt.quiet) throw new Error('대시보드 설정이 없습니다 (.env 의 SUPABASE_* 확인)')
+    say('  업로드 : 건너뜀 — 대시보드 설정 없음 (.env 의 SUPABASE_*)')
+    return
+  }
+
+  try {
+    const client = await signIn({
+      url: cfg.supabaseUrl,
+      anonKey: cfg.supabaseAnonKey,
+      email: cfg.supabaseEmail,
+      password: cfg.supabasePassword,
+    })
+
+    const already = await uploadedDays(client)
+    const missing = listSnapshots(cfg.snapshotDir).filter((f) => !already.has(f.slice(0, 10)))
+
+    let kb = 0
+    for (const file of missing) {
+      const r = await uploadSnapshot(client, readSnapshot(cfg.snapshotDir, file))
+      kb += r.sizeKb
+    }
+
+    const entries = await uploadTaskMap(client, loadTaskMap(cfg.taskmapPath))
+
+    if (missing.length > 0) say(`  업로드 : 스냅샷 ${missing.length}개 (${kb}KB) · 태스크 맵 항목 ${entries}개`)
+    else say(`  업로드 : 새 스냅샷 없음 · 태스크 맵 항목 ${entries}개`)
+  } catch (e) {
+    // 스캔에 딸려 돌 때는 여기서 멈추지 않습니다 — 스냅샷은 이미 로컬에 남았습니다
+    const msg = e instanceof Error ? e.message : String(e)
+    if (!opt.quiet) throw e
+    say(`  ⚠ 업로드 실패 — ${msg}`)
+    say('    스냅샷은 로컬에 남았습니다. 나중에 `npm run push` 로 올리세요.')
+  }
+}
+
+async function cmdPush() {
+  say('대시보드 업로드')
+  await pushAll()
 }
 
 /**
@@ -360,10 +416,11 @@ try {
   else if (cmd === 'weekly') await cmdWeekly(arg)
   else if (cmd === 'monthly') await cmdMonthly(arg)
   else if (cmd === 'list') await cmdList()
+  else if (cmd === 'push') await cmdPush()
   else if (cmd === 'ui') await cmdUi()
   else if (cmd === 'doctor') await cmdDoctor()
   else {
-    say('사용법: reporter <scan|weekly [YYYY-MM-DD(월)]|monthly [YYYY-MM]|list|ui|doctor>')
+    say('사용법: reporter <scan|push|weekly [YYYY-MM-DD(월)]|monthly [YYYY-MM]|list|ui|doctor>')
     process.exit(2)
   }
 } catch (e) {

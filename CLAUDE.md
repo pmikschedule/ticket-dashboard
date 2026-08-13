@@ -23,10 +23,17 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
 reporter/             주간·월간 보고서 생성기 (Node) — desk + 대시보드 → pptx·xlsx
 ```
 
-`reporter/` 는 이 시스템의 일부가 아니라 **이 시스템을 읽어 가는 소비자**입니다.
-대시보드에서 티켓을 대분류 3종(장애·유지보수·신규개발) 다 읽고(읽기 전용),
-desk 라는 별개 시스템의 업무 현황과 합쳐 한 장짜리 보고서를 만듭니다.
-자세한 것은 [reporter/README.md](reporter/README.md).
+`reporter/` 는 이 시스템의 일부가 아니라 **이 시스템에 붙어 사는 도구**입니다.
+대시보드에서 티켓을 대분류 3종(장애·유지보수·신규개발) 다 읽고, desk 라는 별개
+시스템의 업무 현황과 합쳐 보고서를 만듭니다. 자세한 것은
+[reporter/README.md](reporter/README.md).
+
+**읽기 전용이 아닙니다.** desk 스냅샷과 태스크 맵은 대시보드 DB 에 씁니다
+(`desk_snapshots`·`task_map`, schema.sql 24장). desk 인증이 특정 Mac 의 Chrome
+쿠키라 **수집이 그 Mac 을 벗어날 수 없어서**, 그 Mac 이 모아 올리지 않으면 팀은
+desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대로 로컬이고 결과만
+올라옵니다. 그래도 **service_role 키는 여전히 안 씁니다** — 관리자 계정으로
+로그인해 RLS 를 그대로 통과합니다.
 
 ## 절대 규칙
 
@@ -125,8 +132,9 @@ import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 �
 cd web      && npm test && npm run build   # 순수 로직 115개 + 타입체크
 cd agent    && pytest -q                   # 순수 로직·파이프라인 138개
 cd agent    && ticket-agent doctor         # 설정·연결 점검
-cd reporter && npm test                    # 집계·레이아웃 225개 + 타입체크
-cd reporter && npm run scan                # desk 스냅샷 (주 1회 이상)
+cd reporter && npm test                    # 집계·레이아웃 229개 + 타입체크
+cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
+cd reporter && npm run push                # 밀린 스냅샷만 올리기
 cd reporter && npm run weekly              # 주간 업무 보고 pptx (화~월 구간)
 cd reporter && npm run monthly             # 지난달 보고서 pptx
 cd reporter && npm run list                # 업무 전수 목록 xlsx

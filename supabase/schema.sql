@@ -1641,3 +1641,113 @@ $$;
 drop trigger if exists trg_tickets_guard_received on public.tickets;
 create trigger trg_tickets_guard_received before update on public.tickets
   for each row execute function public.guard_received_at();
+
+-- ============================================================================
+-- 24. desk 스냅샷과 태스크 맵 — 보고서를 대시보드 안에서 만들기 위한 표
+-- ============================================================================
+-- reporter/ 는 지금까지 **이 시스템을 읽기만 하는 소비자**였습니다. 여기서
+-- 그 규칙이 바뀝니다 — desk 스냅샷을 이 DB 에 씁니다.
+--
+-- 이유는 desk 인증이 Chrome 에 저장된 Cloudflare Access 쿠키라 **수집이 특정
+-- Mac 을 벗어날 수 없기** 때문입니다. 그 Mac 이 모아 올려 주지 않으면 팀은
+-- desk 업무 현황을 대시보드에서 볼 방법이 없고, 태스크 맵도 그 Mac 에만 남아
+-- 관리자 한 사람의 로컬 파일이 됩니다.
+--
+-- 수집은 계속 그 Mac 에서 하고, **결과만** 여기로 옵니다.
+-- 자세한 근거는 docs/PLAN-REPORT-INTEGRATION.md.
+-- ----------------------------------------------------------------------------
+
+-- ----------------------------------------------------------------------------
+-- 24.1 desk 스냅샷 — 원본 JSON 을 통째로
+-- ----------------------------------------------------------------------------
+-- **가공해서 넣지 않습니다.** 보고서 서식이 나중에 바뀌어도 과거 스냅샷에서
+-- 다시 뽑을 수 있어야 합니다. 수집 시점에 요약하면 그 순간 정보가 사라지고
+-- 되돌릴 방법이 없습니다 (desk 는 현재 상태만 보관합니다).
+create table if not exists public.desk_snapshots (
+  day        date primary key,              -- 스캔 날짜. 하루에 한 개, 다시 뜨면 덮어씁니다
+  scanned_at timestamptz not null,
+  source_at  timestamptz,                   -- desk 가 알려 준 updatedAt. 없을 수 있습니다
+  state      jsonb       not null,          -- /api/state 응답의 state 통째로
+  counts     jsonb       not null,          -- {work, projects, decisions} — 목록 화면이 본문 없이 훑기 위해
+  uploaded_by uuid references public.users(id) on delete set null
+);
+
+comment on table public.desk_snapshots is
+  'desk /api/state 원본 스냅샷. 가공 없이 보존합니다 — desk 는 현재 상태만 보관하므로 안 떠 두면 그날은 복원되지 않습니다';
+
+-- 목록 화면은 state(수백 KB) 없이 날짜만 훑습니다
+create index if not exists idx_desk_snapshots_day on public.desk_snapshots (day desc);
+
+-- ----------------------------------------------------------------------------
+-- 24.2 태스크 맵 — 한 행이 규칙 전체
+-- ----------------------------------------------------------------------------
+-- 사람마다 태스크를 쪼개는 기준이 다릅니다. 한 사람은 하나의 일을 분석·설계·
+-- 구현 3건으로 등록하고 다른 사람은 1건으로 등록합니다. 그대로 실으면 같은
+-- 크기의 일이 3행과 1행으로 나오고 보고서 한 장 예산이 등록 습관에 좌우됩니다.
+--
+-- 그 조정 규칙을 사람 머릿속이 아니라 여기 둡니다. **행이 하나뿐인 이유**는
+-- 규칙 전체가 한 덩어리로 읽히고 저장돼야 하기 때문입니다 — 항목별로 행을
+-- 나누면 부분 저장이 생기고, 반쯤 적용된 맵으로 보고서가 나갑니다.
+create table if not exists public.task_map (
+  id         int primary key default 1 check (id = 1),
+  version    int         not null default 1,
+  entries    jsonb       not null default '[]'::jsonb,
+  updated_at timestamptz not null default now(),
+  updated_by uuid references public.users(id) on delete set null
+);
+
+comment on column public.task_map.entries is
+  '보고 항목 배열. 항목 하나가 desk work.id 를 N개 가집니다 — 통합·재배정·개명·제외가 전부 이 한 구조의 조합입니다';
+
+insert into public.task_map (id, version, entries) values (1, 1, '[]'::jsonb)
+on conflict (id) do nothing;
+
+-- ----------------------------------------------------------------------------
+-- 24.3 RLS — 읽기는 팀원, 쓰기는 관리자
+-- ----------------------------------------------------------------------------
+-- 스냅샷에는 desk 의 업무 제목·담당자가 그대로 들어 있습니다. 팀 밖으로 나가면
+-- 안 되므로 다른 표와 같은 기준(is_member)으로 막습니다.
+--
+-- 쓰기를 관리자로 좁히는 이유는 둘입니다. 스냅샷은 **그 Mac 한 대만** 올리면
+-- 되고, 태스크 맵은 팀 전체 보고서의 모양을 바꾸는 규칙이라 아무나 고치면
+-- 매주 다른 보고서가 나갑니다.
+alter table public.desk_snapshots enable row level security;
+alter table public.task_map       enable row level security;
+
+drop policy if exists desk_snap_read         on public.desk_snapshots;
+drop policy if exists desk_snap_insert_admin on public.desk_snapshots;
+drop policy if exists desk_snap_update_admin on public.desk_snapshots;
+drop policy if exists desk_snap_delete_admin on public.desk_snapshots;
+
+create policy desk_snap_read on public.desk_snapshots
+  for select using (public.is_member());
+
+create policy desk_snap_insert_admin on public.desk_snapshots
+  for insert with check (public.is_admin());
+
+create policy desk_snap_update_admin on public.desk_snapshots
+  for update using (public.is_admin()) with check (public.is_admin());
+
+create policy desk_snap_delete_admin on public.desk_snapshots
+  for delete using (public.is_admin());
+
+drop policy if exists task_map_read         on public.task_map;
+drop policy if exists task_map_update_admin on public.task_map;
+
+create policy task_map_read on public.task_map
+  for select using (public.is_member());
+
+-- insert 정책을 두지 않습니다. 행은 위 seed 하나뿐이고 더 생기면 안 됩니다
+-- (check (id = 1) 이 막지만, 정책까지 없으면 의도가 분명해집니다).
+create policy task_map_update_admin on public.task_map
+  for update using (public.is_admin()) with check (public.is_admin());
+
+-- ----------------------------------------------------------------------------
+-- 24.4 목록용 뷰 — state 를 빼고 날짜만
+-- ----------------------------------------------------------------------------
+-- 스냅샷 하나가 수백 KB 입니다. 화면이 "어느 날짜가 있나" 를 물을 때마다
+-- 본문을 통째로 내려받으면 목록 한 번에 수십 MB 가 됩니다.
+create or replace view public.desk_snapshot_days as
+select day, scanned_at, source_at, counts
+from public.desk_snapshots
+order by day desc;

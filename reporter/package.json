@@ -9,6 +9,7 @@
   },
   "scripts": {
     "scan": "tsx src/cli.ts scan",
+    "push": "tsx src/cli.ts push",
     "weekly": "tsx src/cli.ts weekly",
     "monthly": "tsx src/cli.ts monthly",
     "list": "tsx src/cli.ts list",
