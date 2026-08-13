@@ -247,3 +247,28 @@ export interface TicketFilters {
   assigneeId?: string | 'all' | 'unassigned'
   search?: string
 }
+
+// ---------------------------------------------------------------------------
+// desk 스냅샷 · 태스크 맵 (schema.sql 24장)
+// ---------------------------------------------------------------------------
+
+/** 목록용 — `state` 를 뺀 뷰입니다. 스냅샷 하나가 수백 KB 라 목록에 본문을 싣지 않습니다 */
+export interface DeskSnapshotDay {
+  day: string
+  scanned_at: string
+  source_at: string | null
+  counts: { work: number; projects: number; decisions: number }
+}
+
+export interface DeskSnapshotRow extends DeskSnapshotDay {
+  /** desk `/api/state` 응답 그대로. 가공하지 않고 보존합니다 */
+  state: unknown
+}
+
+export interface TaskMapRow {
+  id: number
+  version: number
+  entries: unknown[]
+  updated_at: string | null
+  updated_by: string | null
+}

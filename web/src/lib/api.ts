@@ -20,7 +20,10 @@ import type {
   ManualIntakeRow,
   ScannedMail,
   StatusHistoryRow,
+  DeskSnapshotDay,
+  DeskSnapshotRow,
   SystemRow,
+  TaskMapRow,
   TicketFilters,
   TicketMeta,
   TicketWithMeta,
@@ -819,4 +822,80 @@ export async function fetchManualIntakes(limit = 20): Promise<ManualIntakeRow[]>
       .order('requested_at', { ascending: false })
       .limit(limit),
   ) as ManualIntakeRow[]
+}
+
+// ---------------------------------------------------------------------------
+// desk 스냅샷 · 태스크 맵
+// ---------------------------------------------------------------------------
+
+/**
+ * desk 는 **별개 시스템**입니다. 그 업무 현황을 이 대시보드에서 보려면 누군가
+ * 스냅샷을 올려 줘야 하는데, desk 인증이 특정 Mac 의 Chrome 쿠키라 수집이 그
+ * Mac 을 벗어날 수 없습니다. `reporter/` 가 주 2회 올립니다.
+ *
+ * 스냅샷 하나가 수백 KB 라 **목록은 뷰(state 제외)로 봅니다.**
+ */
+export async function fetchSnapshotDays(): Promise<DeskSnapshotDay[]> {
+  return unwrap(
+    await supabase.from('desk_snapshot_days').select('*').limit(60),
+  ) as DeskSnapshotDay[]
+}
+
+/** 가장 최근 스냅샷 한 개. 없으면 null — 아직 아무도 안 올린 상태입니다 */
+export async function fetchLatestSnapshot(): Promise<DeskSnapshotRow | null> {
+  const { data, error } = await supabase
+    .from('desk_snapshots')
+    .select('day, scanned_at, source_at, state, counts')
+    .order('day', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data as DeskSnapshotRow | null) ?? null
+}
+
+/** 태스크 맵. 행은 `id = 1` 하나뿐이고 seed 로 미리 넣혀 있습니다 */
+export async function fetchTaskMap(): Promise<TaskMapRow> {
+  return unwrap(
+    await supabase.from('task_map').select('*').eq('id', 1).single(),
+  ) as TaskMapRow
+}
+
+/**
+ * 태스크 맵 저장 — **낙관적 잠금**입니다.
+ *
+ * 읽을 때 본 `updated_at` 을 조건에 겁니다. 그사이 다른 사람이 저장했으면 0행이
+ * 갱신되고 우리는 거절합니다. 잠금이 없으면 두 사람이 같이 편집할 때 나중 사람이
+ * 앞사람의 분류를 통째로 덮어쓰는데, 그 사실을 아무도 모릅니다.
+ *
+ * 쓰기는 관리자만 통과합니다 (schema.sql 24.3). 화면에서 버튼을 가리는 것은
+ * 편의일 뿐이고 실제 차단은 RLS 입니다.
+ */
+export async function saveTaskMap(input: {
+  entries: unknown[]
+  version: number
+  /** 읽을 때 본 값. null 이면 처음 저장하는 것으로 봅니다 */
+  expectedUpdatedAt: string | null
+  updatedBy: string
+}): Promise<TaskMapRow> {
+  let q = supabase
+    .from('task_map')
+    .update({
+      entries: input.entries,
+      version: input.version,
+      updated_at: new Date().toISOString(),
+      updated_by: input.updatedBy,
+    })
+    .eq('id', 1)
+
+  q = input.expectedUpdatedAt
+    ? q.eq('updated_at', input.expectedUpdatedAt)
+    : q.is('updated_at', null)
+
+  const rows = unwrap(await q.select('*')) as TaskMapRow[]
+  if (rows.length === 0) {
+    throw new Error(
+      '다른 사람이 먼저 저장했습니다. 화면을 새로고침해 최신 내용을 받은 뒤 다시 반영하세요.',
+    )
+  }
+  return rows[0]!
 }

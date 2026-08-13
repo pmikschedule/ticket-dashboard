@@ -11,6 +11,7 @@ import ScreeningPage from './pages/ScreeningPage'
 import SettingsPage from './pages/SettingsPage'
 import LoginPage from './pages/LoginPage'
 import StatsPage from './pages/StatsPage'
+import TaskMapPage from './pages/TaskMapPage'
 import WeeklyPage from './pages/WeeklyPage'
 import TicketDetailPage from './pages/TicketDetailPage'
 
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="new" element={<NewTicketPage />} />
         <Route path="weekly" element={<WeeklyPage />} />
         <Route path="gantt" element={<GanttPage />} />
+        <Route path="taskmap" element={<TaskMapPage />} />
         <Route path="stats" element={<StatsPage />} />
         <Route path="screening" element={<ScreeningPage />} />
         <Route path="settings" element={<SettingsPage />} />

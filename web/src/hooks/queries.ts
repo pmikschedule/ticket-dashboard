@@ -20,6 +20,9 @@ export const keys = {
   secrets: ['secrets'] as const,
   scans: (filters: api.ScanFilters) => ['scans', filters] as const,
   manualIntakes: ['manual-intakes'] as const,
+  snapshot: ['desk-snapshot'] as const,
+  snapshotDays: ['desk-snapshot-days'] as const,
+  taskMap: ['task-map'] as const,
 }
 
 export function useTickets(filters: TicketFilters) {
@@ -443,5 +446,43 @@ export function useUpdateUserRole() {
     mutationFn: ({ userId, role }: { userId: string; role: 'admin' | 'member' }) =>
       api.updateUserRole(userId, role),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: keys.users }),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// desk 스냅샷 · 태스크 맵
+// ---------------------------------------------------------------------------
+
+/**
+ * 스냅샷은 수백 KB 라 자주 다시 받지 않습니다. 어차피 주 2회만 바뀝니다.
+ */
+export function useLatestSnapshot() {
+  return useQuery({
+    queryKey: keys.snapshot,
+    queryFn: api.fetchLatestSnapshot,
+    staleTime: 600_000,
+  })
+}
+
+export function useSnapshotDays() {
+  return useQuery({ queryKey: keys.snapshotDays, queryFn: api.fetchSnapshotDays, staleTime: 600_000 })
+}
+
+export function useTaskMap() {
+  return useQuery({ queryKey: keys.taskMap, queryFn: api.fetchTaskMap })
+}
+
+/**
+ * 저장에 성공하면 서버가 돌려준 행으로 캐시를 **바로 갈아 끼웁니다.**
+ * 다시 조회하지 않는 이유는 낙관적 잠금 때문입니다 — 방금 저장한 `updated_at`
+ * 을 손에 쥐고 있어야 이어서 저장할 수 있습니다.
+ */
+export function useSaveTaskMap() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: api.saveTaskMap,
+    onSuccess: (row) => {
+      queryClient.setQueryData(keys.taskMap, row)
+    },
   })
 }
