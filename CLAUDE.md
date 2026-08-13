@@ -12,6 +12,7 @@
 | [docs/SETUP.md](docs/SETUP.md) | 설치·배포·운영 |
 | [docs/HANDOFF.md](docs/HANDOFF.md) | 인수인계. **그 시점의 상태**이지 사양이 아닙니다 |
 | [docs/reference/](docs/reference/) | **다른 프로젝트의 참고 자료.** 이 시스템의 사양이 아닙니다 |
+| [reporter/README.md](reporter/README.md) | 월간 보고서 생성기. `docs/reference/SPEC-REPORTER.md` 가 그 기획서입니다 |
 
 ## 구성
 
@@ -19,7 +20,13 @@
 supabase/schema.sql   테이블 8개 + RLS + Storage + 통계 뷰 (한 파일, 재실행 안전)
 agent/                Local PC 에이전트 (Python) — 메일 수집·분류·적재, 완료 회신 발송
 web/                  React 대시보드 — 칸반·리스트·상세·통계
+reporter/             주간·월간 보고서 생성기 (Node) — desk + 대시보드 → pptx·xlsx
 ```
+
+`reporter/` 는 이 시스템의 일부가 아니라 **이 시스템을 읽어 가는 소비자**입니다.
+대시보드에서 티켓을 대분류 3종(장애·유지보수·신규개발) 다 읽고(읽기 전용),
+desk 라는 별개 시스템의 업무 현황과 합쳐 한 장짜리 보고서를 만듭니다.
+자세한 것은 [reporter/README.md](reporter/README.md).
 
 ## 절대 규칙
 
@@ -101,6 +108,10 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
 2. `agent/src/ticket_agent/constants.py`
 3. `web/src/lib/constants.ts`
 
+`reporter/src/types.ts` 에도 대분류·등급 값이 옮겨 적혀 있습니다. 별개 패키지라
+import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 대신 **보고서 건수가
+조용히 0 이 됩니다** — 모르는 값은 어느 칸에도 안 세기 때문입니다.
+
 ## 차트
 
 - 단일 계열에는 색을 돌려 쓰지 않습니다 — 막대 옆 라벨이 이미 항목을 구분합니다.
@@ -111,9 +122,15 @@ web/                  React 대시보드 — 칸반·리스트·상세·통계
 ## 명령
 
 ```bash
-cd web   && npm test && npm run build   # 순수 로직 115개 + 타입체크
-cd agent && pytest -q                   # 순수 로직·파이프라인 138개
-cd agent && ticket-agent doctor         # 설정·연결 점검
+cd web      && npm test && npm run build   # 순수 로직 115개 + 타입체크
+cd agent    && pytest -q                   # 순수 로직·파이프라인 138개
+cd agent    && ticket-agent doctor         # 설정·연결 점검
+cd reporter && npm test                    # 집계·레이아웃 225개 + 타입체크
+cd reporter && npm run scan                # desk 스냅샷 (주 1회 이상)
+cd reporter && npm run weekly              # 주간 업무 보고 pptx (화~월 구간)
+cd reporter && npm run monthly             # 지난달 보고서 pptx
+cd reporter && npm run list                # 업무 전수 목록 xlsx
+cd reporter && npm run ui                  # 태스크 맵 편집 화면
 ```
 
 ## 용어

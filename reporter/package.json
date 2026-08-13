@@ -1,0 +1,30 @@
+{
+  "name": "activity-reporter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "desk + 티켓 대시보드 → 활동 월간 요약 보고서(pptx) 생성기",
+  "bin": {
+    "reporter": "./src/cli.ts"
+  },
+  "scripts": {
+    "scan": "tsx src/cli.ts scan",
+    "weekly": "tsx src/cli.ts weekly",
+    "monthly": "tsx src/cli.ts monthly",
+    "list": "tsx src/cli.ts list",
+    "ui": "tsx src/cli.ts ui",
+    "doctor": "tsx src/cli.ts doctor",
+    "test": "vitest run && tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "exceljs": "^4.4.0",
+    "pptxgenjs": "^3.12.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
