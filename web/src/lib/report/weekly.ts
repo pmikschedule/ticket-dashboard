@@ -39,6 +39,7 @@ function rowProgress(work: DeskWork, done: boolean): number | null {
 }
 import { mergedLabel } from './apply'
 import { projectRails, type ProjectRail } from './milestones'
+import { summarizeOps, type OpsSummary, type ReportTicket } from './ops'
 import { inWeek, rangeLabel, type Week } from './week'
 import type { DeskProject, DeskState, DeskWork } from './types'
 
@@ -73,22 +74,10 @@ export interface WeeklyGroup {
   rows: WeeklyRow[]
 }
 
-/** 2장 — 프로젝트 진척. 지난주 값이 없으면 `before` 가 null 이고 증감을 안 그립니다 */
-export interface ProgressRow {
-  title: string
-  before: number | null
-  after: number
-  milestones: { done: number; total: number }
-  /** 금주 늘어난 마일스톤 개수. 비교 대상이 없으면 null */
-  delta: number | null
-}
-
 export interface WeeklyModel {
   period: { label: string; from: string; to: string; range: string }
-  author: string
   reportedOn: string
   subtitle: string
-  team: string
 
   /** 비교에 쓴 지난주 스냅샷 날짜. null 이면 **기준 주차**(비교 대상 없음) */
   baseline: string | null
@@ -98,7 +87,8 @@ export interface WeeklyModel {
   /** 프로젝트 묶음 → 하위 태스크. 독립 항목 묶음이 맨 뒤에 하나 붙습니다 */
   groups: WeeklyGroup[]
 
-  progress: ProgressRow[]
+  /** 2장 — 티켓 대시보드의 그 주 접수 현황 */
+  ops: OpsSummary
   /** 2장째 슬라이드 — 프로젝트별 마일스톤 레일 */
   rails: ProjectRail[]
   /** 3장 — 일정 변경 · 정체 · 지연 */
@@ -153,35 +143,6 @@ export function diffWork(before: DeskState | null, after: DeskState): WorkDiff {
     if (!p.due && w.due) d.dueFixed.add(w.id)
   }
   return d
-}
-
-/**
- * 마일스톤 증가분.
- *
- * 프로젝트 진척은 업무 상태가 아니라 **마일스톤**이 근거입니다 (기획서 6.2).
- * 업무 3건을 끝내도 마일스톤이 안 닫혔으면 프로젝트 진척은 그대로입니다 —
- * 그걸 올려 주면 매주 진척이 오르는데 프로젝트는 안 끝나는 보고서가 됩니다.
- */
-export function diffProgress(before: DeskState | null, after: DeskState): ProgressRow[] {
-  const prev = new Map((before?.projects ?? []).map((p) => [p.key, p]))
-
-  return after.projects
-    .filter((p) => (p.milestones ?? []).length > 0)
-    .map((p) => {
-      const ms = p.milestones!
-      const doneNow = ms.filter((m) => m.done).length
-      const old = prev.get(p.key)
-      const oldMs = old?.milestones ?? null
-      const doneBefore = oldMs ? oldMs.filter((m) => m.done).length : null
-      return {
-        title: p.title,
-        before: before && oldMs ? projectProgress(old) : null,
-        after: projectProgress(p) ?? 0,
-        milestones: { done: doneNow, total: ms.length },
-        delta: doneBefore === null ? null : doneNow - doneBefore,
-      }
-    })
-    .sort((a, b) => (b.delta ?? -1) - (a.delta ?? -1) || b.after - a.after)
 }
 
 /**
@@ -413,19 +374,18 @@ export function selectPlans(state: DeskState, next: Week, max: number): string[]
 export interface WeeklyOptions {
   week: Week
   nextWeek: Week
-  author: string
   reportedOn: string
   subtitle: string
-  team: string
   /** 비교에 쓴 지난주 스냅샷 날짜. 없으면 null (기준 주차) */
   baseline: string | null
   /** 정체 판정용 과거 스냅샷들 (오래된 것부터). 2개 미만이면 정체를 안 냅니다 */
   history?: DeskState[]
   /** 표 영역 높이(인치)와 각 줄 높이. 넘치면 잘라내고 각주에 적습니다 */
   table: { budget: number; headerH: number; ruleH: number; rowH: number }
-  /** 2장에 들어가는 프로젝트 수 · 3장에 들어가는 변화 줄 수 */
-  maxProgress: number
+  /** 3장에 들어가는 변화 줄 수 */
   maxChanges: number
+  /** 그 주 운영 현황의 원천. 대시보드를 못 읽었으면 빈 배열 */
+  tickets: ReportTicket[]
 }
 
 export function buildWeekly(
@@ -450,8 +410,7 @@ export function buildWeekly(
     added: flat.filter((r) => r.chip === 'new').length,
   }
 
-  const allProgress = diffProgress(before, state)
-  const progress = allProgress.slice(0, opt.maxProgress)
+  const ops = summarizeOps(opt.tickets, opt.week)
 
   // 3장 — 일정 변경이 먼저, 그다음 정체, 남으면 지연.
   // 일정 변경은 **이번 주에 실제로 움직인 사실**이고 정체·지연은 안 움직인 사실입니다.
@@ -488,9 +447,6 @@ export function buildWeekly(
   if (allChanges > opt.maxChanges) {
     footnotes.push(`변화·지연 ${allChanges}건 중 ${opt.maxChanges}건 표기`)
   }
-  if (allProgress.length > progress.length) {
-    footnotes.push(`진척 프로젝트 ${allProgress.length}개 중 ${progress.length}개 표기`)
-  }
   if (flat.some((r) => !r.detail)) {
     footnotes.push('진행내용 공란 = desk 에 기록 없음')
   }
@@ -502,14 +458,12 @@ export function buildWeekly(
       to: opt.week.to,
       range: rangeLabel(opt.week),
     },
-    author: opt.author,
     reportedOn: opt.reportedOn,
     subtitle: opt.subtitle,
-    team: opt.team,
     baseline: opt.baseline,
     summary,
     groups,
-    progress,
+    ops,
     rails: projectRails(state),
     changes: changes.slice(0, opt.maxChanges),
     plans: selectPlans(state, opt.nextWeek, 4),

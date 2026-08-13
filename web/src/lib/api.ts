@@ -6,7 +6,8 @@
  */
 
 import { SCAN_OUTCOMES } from './constants'
-import type { Resolution, ScanOutcome } from './constants'
+import type { Category, Resolution, ScanOutcome, Severity, Status, WorkType } from './constants'
+import type { ReportTicket } from './report/ops'
 import { buildMailComment, parseTicketNumber } from './link'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
@@ -916,4 +917,42 @@ export async function saveTaskMap(input: {
     )
   }
   return rows[0]!
+}
+
+/**
+ * 주간 보고서 2장(운영 현황)의 원천.
+ *
+ * **전 구간을 받아 옵니다.** 그 주만 받으면 '전주 대비' 를 낼 수 없고, 전주가
+ * 0건인지 집계 시작 전인지도 구분할 수 없습니다. 티켓 수가 수백 건대라 한 번에
+ * 받아도 무리가 없습니다.
+ */
+export async function fetchReportTickets(): Promise<ReportTicket[]> {
+  const rows = unwrap(
+    await supabase
+      .from('tickets')
+      .select('id, subject, received_at, ticket_meta!inner(work_type, category, severity, status, system_type)')
+      .order('received_at', { ascending: true }),
+  ) as unknown as {
+    id: number
+    subject: string
+    received_at: string
+    ticket_meta: {
+      work_type: WorkType
+      category: Category
+      severity: Severity
+      status: Status
+      system_type: string | null
+    }
+  }[]
+
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.subject,
+    receivedAt: (r.received_at ?? '').slice(0, 10),
+    workType: r.ticket_meta.work_type,
+    category: r.ticket_meta.category,
+    severity: r.ticket_meta.severity,
+    status: r.ticket_meta.status,
+    system: r.ticket_meta.system_type,
+  }))
 }

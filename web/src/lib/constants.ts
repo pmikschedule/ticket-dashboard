@@ -283,8 +283,10 @@ export const ROLE_LABELS: Record<Role, string> = {
 // ---------------------------------------------------------------------------
 
 /**
- * 슬라이드 부제·팀명. desk 나 티켓에서 나올 값이 아니라 **우리가 정한 문구**라
- * 여기 둡니다. 바꿀 일이 생기면 이 두 줄만 고칩니다.
+ * 슬라이드 부제. desk 나 티켓에서 나올 값이 아니라 **우리가 정한 문구**라
+ * 여기 둡니다.
+ *
+ * 꼬리말의 팀명은 뺐습니다 — 부제가 이미 팀 이름이라 중복이고, 예전 값이
+ * 잘못 박혀 있었습니다.
  */
-export const REPORT_SUBTITLE = 'WEB / POVAS 운영·개발'
-export const REPORT_TEAM = 'Compliance Team'
+export const REPORT_SUBTITLE = 'SW Development Team'

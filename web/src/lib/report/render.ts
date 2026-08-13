@@ -23,10 +23,13 @@ import {
   SUMMARY,
   TABLE,
   WEEKLY_CHIP,
-  WEEKLY_PROGRESS,
+  WEEKLY_OPS,
+  WORK_TYPE_STYLE,
 } from './layout'
 import { defineSlideSize, hline, R, rect, round, sectionTitle as drawSectionTitle, text, type Slide } from './draw'
-import type { ProgressRow, WeeklyGroup, WeeklyModel, WeeklyRow } from './weekly'
+import type { WeeklyGroup, WeeklyModel, WeeklyRow } from './weekly'
+import { opsDeltaLabel } from './ops'
+import { CATEGORIES, CATEGORY_LABELS, WORK_TYPES, WORK_TYPE_LABELS } from '../constants'
 import { chipWidth, fitRail, type ProjectRail, type RailChip } from './milestones'
 
 function sectionTitle(s: Slide, pos: { x: number; y: number; w: number }, label: string) {
@@ -43,8 +46,6 @@ function renderHeader(s: Slide, m: WeeklyModel) {
     [
       { text: '보고주차  ', options: { bold: true, color: C.NAVY } },
       { text: `${m.period.label} (${m.period.range})   `, options: { color: C.INK } },
-      { text: '작성자  ', options: { bold: true, color: C.NAVY } },
-      { text: `${m.author}   `, options: { color: C.INK } },
       { text: '보고일  ', options: { bold: true, color: C.NAVY } },
       { text: m.reportedOn, options: { color: C.INK } },
     ],
@@ -298,71 +299,103 @@ function renderRow(s: Slide, row: WeeklyRow, y: number, zebra: boolean, standalo
 }
 
 /**
- * 2장 — 프로젝트 진척.
+ * 2장 — 운영 현황 (티켓 대시보드).
  *
- * 막대의 연한 부분이 지난주까지, 진한 부분이 **금주 증가분**입니다.
- * 비교 대상이 없는 주에는 증가분을 그리지 않고 현재 값만 남색으로 칠합니다.
+ * 1장의 표는 desk 의 개발 안건이고 여기는 메일로 들어온 요청입니다. **다른
+ * 축이라 숫자가 안 맞는 게 정상**이고, 그래서 장 제목으로 갈라 둡니다.
  */
-function renderProgress(s: Slide, m: WeeklyModel) {
-  sectionTitle(s, SECTION_POS.s2, '2. 주간 진척')
+function renderOps(s: Slide, m: WeeklyModel) {
+  sectionTitle(s, SECTION_POS.s2, '2. 운영 현황')
 
-  const p = WEEKLY_PROGRESS
-  round(s, p.panel.x, p.panel.y, p.panel.w, p.panel.h, C.WHITE)
-  text(s, '프로젝트 진척 (마일스톤)', { ...p.title, color: C.NAVY, bold: true })
-  text(s, m.baseline ? '연한 칸=지난주 · 진한 칸=금주' : '비교 대상 없음', {
-    ...p.legend,
-    color: C.MUTED,
-    align: 'right',
+  const o = WEEKLY_OPS
+  round(s, o.panel.x, o.panel.y, o.panel.w, o.panel.h, C.WHITE)
+
+  const ops = m.ops
+  text(s, `금주 접수 ${ops.total}건`, { ...o.total, color: C.NAVY, bold: true })
+  text(s, opsDeltaLabel(ops), { ...o.delta, color: C.MUTED, align: 'right' })
+
+  // 대분류 카드 — 이 장에서 가장 먼저 보여야 하는 것입니다
+  WORK_TYPES.forEach((kind, i) => {
+    const x = o.cards.xs[i]!
+    const style = WORK_TYPE_STYLE[kind]
+    round(s, x, o.cards.y, o.cards.w, o.cards.h, style.bg)
+    text(s, WORK_TYPE_LABELS[kind], {
+      x,
+      y: o.cards.y + 0.02,
+      w: o.cards.w,
+      h: 0.17,
+      sz: o.cards.labelSz,
+      color: style.fg,
+      bold: true,
+      align: 'center',
+    })
+    text(s, `${ops.byWorkType[kind]}건`, {
+      x,
+      y: o.cards.y + 0.17,
+      w: o.cards.w,
+      h: 0.23,
+      sz: o.cards.countSz,
+      color: style.fg,
+      bold: true,
+      align: 'center',
+    })
   })
 
-  if (m.progress.length === 0) {
-    text(s, '마일스톤이 등록된 프로젝트가 없습니다', { ...p.empty, color: C.MUTED, align: 'center' })
-    return
+  const line = (i: number, label: string, body: PptxGenJS.TextProps[]) =>
+    text(s, [{ text: `${label}  `, options: { bold: true, color: C.NAVY } }, ...body], {
+      x: o.line.x,
+      y: o.line.ys[i]!,
+      w: o.line.w,
+      h: o.line.h,
+      sz: o.line.sz,
+      color: C.MUTED,
+    })
+
+  // 중분류는 대분류와 **다른 축**입니다 (유지보수이면서 개선일 수 있습니다).
+  // 합계가 대분류와 같아도 같은 것을 두 번 센 게 아닙니다.
+  line(0, '중분류', [
+    { text: CATEGORIES.map((c) => `${CATEGORY_LABELS[c]} ${ops.byCategory[c]}`).join(' · '), options: { color: C.INK } },
+  ])
+  line(1, '처리', [
+    { text: `완료 ${ops.progress.done} · 진행 ${ops.progress.doing} · 대기 ${ops.progress.waiting}`, options: { color: C.INK } },
+  ])
+  // 등급은 **장애만** 모수입니다. 유지보수 티켓에도 등급 컬럼은 있지만 세면
+  // '보통 장애' 가 유지보수 건수만큼 부풀어 오릅니다.
+  line(2, '장애 등급', [
+    { text: `매우심각 ${ops.severity.critical}`, options: { color: C.RED } },
+    { text: ' · ', options: { color: C.MUTED } },
+    { text: `심각 ${ops.severity.major}`, options: { color: C.AMBER } },
+    { text: ' · ', options: { color: C.MUTED } },
+    { text: `보통 ${ops.severity.normal}`, options: { color: C.TEAL } },
+  ])
+
+  const crit = ops.criticalTitles
+  text(s, `금주 매우심각 장애 (${crit.length}건)`, { ...o.critical.title, color: C.NAVY, bold: true })
+  if (crit.length === 0) {
+    text(s, '· 매우심각 장애 없음', {
+      x: o.critical.text.x - 0.13,
+      y: o.critical.firstY,
+      w: o.critical.text.w,
+      h: o.critical.text.h,
+      sz: o.critical.text.sz,
+      color: C.MUTED,
+    })
   }
-
-  m.progress.slice(0, p.max).forEach((row, i) => {
-    renderProgressRow(s, row, p.firstY + i * p.rowH)
+  crit.slice(0, o.critical.max).forEach((t, i) => {
+    const y = o.critical.firstY + i * o.critical.gap
+    rect(s, o.critical.dot.x, y + o.critical.dot.dy, o.critical.dot.w, o.critical.dot.h, C.RED)
+    text(s, t, {
+      x: o.critical.text.x,
+      y,
+      w: o.critical.text.w,
+      h: o.critical.text.h,
+      sz: o.critical.text.sz,
+      color: C.INK,
+    })
   })
-}
-
-function renderProgressRow(s: Slide, row: ProgressRow, y: number) {
-  const p = WEEKLY_PROGRESS
-  const moved = row.delta !== null && row.delta > 0
-
-  text(s, row.title, { x: p.name.x, y, w: p.name.w, h: p.name.h, sz: p.name.sz, color: C.INK, bold: true })
-
-  const pct =
-    row.before !== null && row.before !== row.after
-      ? `${row.before}% → ${row.after}%`
-      : `${row.after}%`
-  text(s, pct, {
-    x: p.pct.x,
-    y,
-    w: p.pct.w,
-    h: p.pct.h,
-    sz: p.pct.sz,
-    color: moved ? C.TEAL : C.NAVY,
-    bold: true,
-    align: 'right',
-  })
-
-  const barY = y + p.bar.dy
-  round(s, p.bar.x, barY, p.bar.w, p.bar.h, C.RULE)
-  const beforeW = ((row.before ?? row.after) / 100) * p.bar.w
-  const afterW = (row.after / 100) * p.bar.w
-  if (beforeW > 0) round(s, p.bar.x, barY, beforeW, p.bar.h, row.before === null ? C.NAVY : C.BAR)
-  // 증가분만 진하게. 0 이면 아무것도 안 그립니다 — 안 움직인 것도 사실입니다.
-  if (afterW > beforeW) round(s, p.bar.x + beforeW, barY, afterW - beforeW, p.bar.h, C.TEAL)
-
-  const delta =
-    row.delta === null ? '금주 비교 없음' : row.delta > 0 ? `금주 +${row.delta}` : '금주 변화 없음'
-  text(s, `마일스톤 ${row.milestones.done}/${row.milestones.total} · ${delta}`, {
-    x: p.sub.x,
-    y: y + p.sub.dy,
-    w: p.sub.w,
-    h: p.sub.h,
-    sz: p.sub.sz,
-    color: moved ? C.TEAL : C.MUTED,
+  text(s, `※ 출처: 티켓 대시보드 (${m.period.range} 접수 기준)`, {
+    ...o.critical.note,
+    color: C.MUTED,
   })
 }
 
@@ -422,6 +455,14 @@ function renderPlans(s: Slide, m: WeeklyModel, nextLabel: string) {
   })
 }
 
+/**
+ * 꼬리말은 **왼쪽만** 씁니다.
+ *
+ * 오른쪽 팀명은 뺐습니다 — 부제가 이미 팀 이름이라 중복이고, 예전 값이
+ * 잘못 박혀 있었습니다. 왼쪽 각주는 남깁니다: 지면 때문에 잘라낸 행, 비교
+ * 대상이 없다는 사실, 파생값이라는 표시가 여기 들어갑니다. 지우면 보고서가
+ * 실제보다 완전해 보입니다.
+ */
 function renderFooter(s: Slide, m: WeeklyModel) {
   const notes = m.footnotes.length > 0 ? ` · ${m.footnotes.join(' · ')}` : ''
   text(s, `※ 데이터 출처: desk (${m.reportedOn} 스냅샷)${notes}`, {
@@ -429,7 +470,6 @@ function renderFooter(s: Slide, m: WeeklyModel) {
     color: C.MUTED,
     valign: 'top',
   })
-  text(s, m.team, { ...FOOT.right, color: C.MUTED, align: 'right' })
 }
 
 /**
@@ -439,19 +479,15 @@ function renderFooter(s: Slide, m: WeeklyModel) {
  * **일정표가 아니라 "지금 어디까지 왔는가" 를 보는 장**이라, 날짜보다 칩의
  * 위치가 본문입니다.
  */
-function renderRailSlide(s: Slide, m: WeeklyModel): string[] {
-  const notes: string[] = []
+function renderRailSlide(s: Slide, m: WeeklyModel): void {
+  // 이 장에는 꼬리말이 없습니다. 여기서 드러난 사실은 1장 각주로 보냅니다.
+  const notes = m.footnotes
 
   text(s, '프로젝트 진행', { ...RAIL.title, color: C.NAVY, bold: true })
-  text(s, `${m.period.range} · ${m.reportedOn} 스냅샷`, {
-    ...RAIL.asOf,
-    color: C.MUTED,
-    align: 'right',
-  })
 
   if (m.rails.length === 0) {
     text(s, '마일스톤이 등록된 프로젝트가 없습니다', { ...RAIL.empty, color: C.MUTED })
-    return notes
+    return
   }
 
   // 프로젝트가 많으면 행을 줄이되 최소 높이 아래로는 안 내려갑니다.
@@ -461,7 +497,7 @@ function renderRailSlide(s: Slide, m: WeeklyModel): string[] {
   const fit = Math.floor(budget / rowH)
   const shown = m.rails.slice(0, fit)
   if (shown.length < m.rails.length) {
-    notes.push(`프로젝트 ${m.rails.length}개 중 ${shown.length}개 표기`)
+    notes.push(`프로젝트 진행 ${m.rails.length}개 중 ${shown.length}개 표기`)
   }
 
   // 머리글
@@ -485,7 +521,6 @@ function renderRailSlide(s: Slide, m: WeeklyModel): string[] {
   if (shown.some((r) => r.chips.some((c) => c.date))) {
     notes.push('마일스톤 날짜는 그 프로젝트 미완료 업무의 최소 마감일(파생)')
   }
-  return notes
 }
 
 /** 한 줄. 완료분을 접었으면 true 를 돌려줍니다 (각주에 셉니다) */
@@ -581,8 +616,6 @@ export function buildWeeklyPptx(m: WeeklyModel, nextLabel: string): PptxGenJS {
   const pptx = new PptxGenJS()
   defineSlideSize(pptx)
   pptx.title = `주간 업무 보고 (${m.period.label})`
-  pptx.author = m.author
-  pptx.company = m.team
 
   const s = pptx.addSlide()
   s.background = { color: C.WHITE }
@@ -590,21 +623,22 @@ export function buildWeeklyPptx(m: WeeklyModel, nextLabel: string): PptxGenJS {
   renderHeader(s, m)
   renderSummary(s, m)
   renderTable(s, m)
-  renderProgress(s, m)
+  renderOps(s, m)
   renderChanges(s, m)
   renderPlans(s, m, nextLabel)
-  renderFooter(s, m)
 
-  // 2장째 — 프로젝트 진행 레일. 접거나 자른 사실은 이 장 꼬리말에 적습니다.
+  // 2장째 — 프로젝트 진행 레일. 이 장에는 꼬리말을 두지 않습니다.
+  //
+  // 대신 **접거나 자르거나 파생한 사실은 1장 각주로 올립니다.** 2장에서 지운
+  // 것은 자리이지 사실이 아닙니다 — 마일스톤 날짜가 desk 가 준 값이 아니라
+  // 우리가 계산한 값이라는 표시는 어딘가에 남아야 합니다.
   const rail = pptx.addSlide()
   rail.background = { color: C.WHITE }
-  const railNotes = renderRailSlide(rail, m)
-  text(rail, `※ 출처: desk (${m.reportedOn} 스냅샷)${railNotes.length ? ` · ${railNotes.join(' · ')}` : ''}`, {
-    ...FOOT.left,
-    color: C.MUTED,
-    valign: 'top',
-  })
-  text(rail, m.team, { ...FOOT.right, color: C.MUTED, align: 'right' })
+  renderRailSlide(rail, m)
+
+  // 1장 꼬리말은 **맨 마지막**입니다. 2장에서 접거나 파생한 사실이 각주에
+  // 얹힌 뒤라야 그 내용까지 실립니다. 순서를 되돌리면 조용히 빠집니다.
+  renderFooter(s, m)
 
   return pptx
 }

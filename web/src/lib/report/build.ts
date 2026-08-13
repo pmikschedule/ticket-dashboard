@@ -6,8 +6,9 @@
  */
 
 import { applyTaskMap, mapFootnotes } from './apply'
-import { ISSUES, STANDALONE_RULE, TABLE, WEEKLY_PROGRESS } from './layout'
+import { ISSUES, STANDALONE_RULE, TABLE } from './layout'
 import type { TaskEntry } from '../taskmap'
+import type { ReportTicket } from './ops'
 import type { DeskState } from './types'
 import { buildWeekly, type WeeklyModel } from './weekly'
 import { currentWeek, nextWeek, parseWeekLabel, rangeLabel, type Week } from './week'
@@ -21,11 +22,11 @@ export interface BuildInput {
   base: DeskState | null
   baseDay: string | null
   entries: TaskEntry[]
+  /** 그 주 운영 현황의 원천. 대시보드를 못 읽었으면 빈 배열 */
+  tickets: ReportTicket[]
   /** 끝나는 월요일(`2026-08-10`). 없으면 **방금 끝난 구간** */
   weekId?: string
-  author: string
   subtitle: string
-  team: string
 }
 
 export interface BuildOutput {
@@ -51,10 +52,8 @@ export function buildWeeklyReport(input: BuildInput): BuildOutput {
   const model = buildWeekly(before, now.state, {
     week,
     nextWeek: nextWeek(week),
-    author: input.author,
     reportedOn: input.day,
     subtitle: input.subtitle,
-    team: input.team,
     baseline: input.baseDay,
     // 정체(3주 연속)는 스냅샷 3주치가 쌓여야 판정합니다. 화면에서는 아직
     // 과거 스냅샷을 여러 개 내려받지 않으므로 비워 두고, 못 잰다는 사실은
@@ -66,8 +65,8 @@ export function buildWeeklyReport(input: BuildInput): BuildOutput {
       ruleH: STANDALONE_RULE.h,
       rowH: TABLE.rowH,
     },
-    maxProgress: WEEKLY_PROGRESS.max,
     maxChanges: ISSUES.max,
+    tickets: input.tickets,
   })
 
   model.footnotes.push(...mapFootnotes(now.issues, input.entries.length > 0))

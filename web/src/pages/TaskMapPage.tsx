@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react'
 
 import { useAuth } from '../hooks/useAuth'
-import { useLatestSnapshot, useSaveTaskMap, useSnapshotBefore, useTaskMap } from '../hooks/queries'
+import {
+  useLatestSnapshot,
+  useReportTickets,
+  useSaveTaskMap,
+  useSnapshotBefore,
+  useTaskMap,
+} from '../hooks/queries'
 import { buildWeeklyReport } from '../lib/report/build'
 import { downloadWeekly } from '../lib/report/render'
 import { currentWeek, rangeLabel } from '../lib/report/week'
-import { REPORT_SUBTITLE, REPORT_TEAM } from '../lib/constants'
+import { REPORT_SUBTITLE } from '../lib/constants'
 import {
   addEntry,
   claimedIds,
@@ -70,6 +76,8 @@ export default function TaskMapPage() {
   // 쓰면 오래된 스냅샷으로 최신 주를 만들어 빈 보고서가 나옵니다.
   const week = snapshot.data ? currentWeek(snapshot.data.day) : null
   const base = useSnapshotBefore(week?.from ?? null)
+  // 2장 운영 현황의 원천. 못 읽어도 보고서는 나와야 하므로 빈 배열로 넘깁니다
+  const tickets = useReportTickets()
   const unmapped = (state?.work.length ?? 0) - claimedIds(entries).size
 
   function edit(next: TaskEntry[]) {
@@ -115,9 +123,8 @@ export default function TaskMapPage() {
         base: (base.data?.state ?? null) as DeskState | null,
         baseDay: base.data?.day ?? null,
         entries,
-        author: user?.name ?? '',
+        tickets: tickets.data ?? [],
         subtitle: REPORT_SUBTITLE,
-        team: REPORT_TEAM,
       })
       await downloadWeekly(out.model, out.nextLabel, out.fileName)
     } catch (e) {
@@ -174,7 +181,7 @@ export default function TaskMapPage() {
         {week && (
           <button
             type="button"
-            disabled={building || base.isLoading}
+            disabled={building || base.isLoading || tickets.isLoading}
             onClick={() => void onBuild()}
             className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40"
             title={`${rangeLabel(week)} 구간으로 만듭니다`}

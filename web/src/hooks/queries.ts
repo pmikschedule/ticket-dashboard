@@ -478,6 +478,15 @@ export function useSnapshotBefore(day: string | null) {
   })
 }
 
+/** 주간 보고서 2장(운영 현황). 전 구간을 받아 전주 대비까지 냅니다 */
+export function useReportTickets() {
+  return useQuery({
+    queryKey: ['report-tickets'],
+    queryFn: api.fetchReportTickets,
+    staleTime: 300_000,
+  })
+}
+
 export function useTaskMap() {
   return useQuery({ queryKey: keys.taskMap, queryFn: api.fetchTaskMap })
 }
