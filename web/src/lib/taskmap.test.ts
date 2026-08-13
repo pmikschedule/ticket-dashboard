@@ -12,6 +12,7 @@ import {
   removeEntry,
   unhideEntry,
   validateTaskMap,
+  type DeskProject,
   type DeskState,
   type DeskWork,
   type TaskEntry,
@@ -23,18 +24,44 @@ function work(over: Partial<DeskWork> = {}): DeskWork {
     title: '업무',
     owner: 'Ji',
     project: null,
+    system: null,
+    parent: null,
     status: 'ing',
     start: null,
     due: null,
     completedOn: null,
     progress: null,
     types: [],
+    detail: null,
+    assessment: null,
+    log: [],
+    ...over,
+  }
+}
+
+function project(over: Partial<DeskProject> = {}): DeskProject {
+  return {
+    key: 'p1',
+    title: '프로젝트',
+    codename: null,
+    parent: null,
+    system: null,
+    systems: null,
+    overview: null,
+    memo: null,
+    assessment: null,
+    current: null,
+    policy: null,
+    milestones: null,
+    participants: null,
+    start: null,
+    due: null,
     ...over,
   }
 }
 
 function state(over: Partial<DeskState> = {}): DeskState {
-  return { updatedAt: null, work: [], projects: [], ...over }
+  return { updatedAt: null, work: [], projects: [], decisions: [], systems: [], people: [], ...over }
 }
 
 const byId = (works: DeskWork[]) => new Map(works.map((w) => [w.id, w]))
@@ -138,10 +165,7 @@ describe('파생값', () => {
 
 describe('화면 묶음', () => {
   const s = state({
-    projects: [
-      { key: 'p1', title: 'A', milestones: null, due: null },
-      { key: 'p2', title: 'B', milestones: null, due: null },
-    ],
+    projects: [project({ key: 'p1', title: 'A' }), project({ key: 'p2', title: 'B' })],
     work: [
       work({ id: '1', project: 'p1' }),
       work({ id: '2', project: 'p1' }),

@@ -853,6 +853,24 @@ export async function fetchLatestSnapshot(): Promise<DeskSnapshotRow | null> {
   return (data as DeskSnapshotRow | null) ?? null
 }
 
+/**
+ * 그 날 **이전** 스냅샷 중 가장 늦은 것. 주간 diff 의 기준입니다.
+ *
+ * '지난주 스냅샷' 을 정확히 요구하지 않는 이유는 스캔을 한 주 거를 수 있기
+ * 때문입니다. 그때는 2주 전 것과 비교하고, 며칠자를 썼는지 보고서에 적습니다.
+ */
+export async function fetchSnapshotBefore(day: string): Promise<DeskSnapshotRow | null> {
+  const { data, error } = await supabase
+    .from('desk_snapshots')
+    .select('day, scanned_at, source_at, state, counts')
+    .lt('day', day)
+    .order('day', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  if (error) throw new Error(error.message)
+  return (data as DeskSnapshotRow | null) ?? null
+}
+
 /** 태스크 맵. 행은 `id = 1` 하나뿐이고 seed 로 미리 넣혀 있습니다 */
 export async function fetchTaskMap(): Promise<TaskMapRow> {
   return unwrap(

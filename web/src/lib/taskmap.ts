@@ -1,3 +1,5 @@
+import { entrySpan as spanOf } from './report/apply'
+
 /**
  * 태스크 맵 — desk 태스크를 **보고 항목**으로 바꾸는 규칙.
  *
@@ -14,34 +16,8 @@
  * 옮겨 오면(4단계) 그쪽이 이 파일을 가져다 쓰고 사본은 없어집니다.
  */
 
-/** desk `/api/state` 의 업무. 화면이 쓰는 것만 좁혀 옮겼습니다 */
-export interface DeskWork {
-  id: string
-  title: string
-  owner: string | null
-  project: string | null
-  /** desk 는 넷을 씁니다. 보류는 **파이프라인 단계가 아니라 옆길**입니다 */
-  status: 'todo' | 'ing' | 'done' | 'hold'
-  start: string | null
-  due: string | null
-  completedOn: string | null
-  progress: number | null
-  types: string[] | null
-}
-
-export interface DeskProject {
-  key: string
-  title: string
-  milestones: { name: string; done: boolean }[] | null
-  hold?: boolean
-  due: string | null
-}
-
-export interface DeskState {
-  updatedAt: string | null
-  work: DeskWork[]
-  projects: DeskProject[]
-}
+export type { DeskProject, DeskState, DeskWork } from './report/types'
+import type { DeskState, DeskWork } from './report/types' 
 
 export interface TaskEntry {
   /** 우리가 만든 id. desk 의 work.id 와 달리 사람이 안 바꿉니다 */
@@ -139,18 +115,9 @@ export function entrySpan(
   e: TaskEntry,
   byId: Map<string, DeskWork>,
 ): { start: string | null; end: string | null; endIsActual: boolean } {
-  const members = e.members.map((id) => byId.get(id)).filter((w): w is DeskWork => Boolean(w))
-  const starts = members.map((w) => w.start).filter((v): v is string => Boolean(v)).sort()
-  const ends = members
-    .map((w) => w.completedOn ?? w.due)
-    .filter((v): v is string => Boolean(v))
-    .sort()
-  const end = ends[ends.length - 1] ?? null
-  return {
-    start: starts[0] ?? null,
-    end,
-    endIsActual: end !== null && members.some((w) => w.status === 'done' && w.completedOn === end),
-  }
+  // 규칙은 보고서와 **같은 함수**를 씁니다. 두 벌이면 화면과 보고서의 기간이
+  // 조용히 갈라지고, 어느 쪽이 맞는지 확인할 방법이 없습니다.
+  return spanOf(e.members.map((id) => byId.get(id)).filter((w): w is DeskWork => Boolean(w)))
 }
 
 /** 새 항목 key. 같은 이름이 이미 있으면 뒤에 번호를 붙입니다 */

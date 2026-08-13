@@ -1,7 +1,11 @@
 import { useMemo, useState } from 'react'
 
 import { useAuth } from '../hooks/useAuth'
-import { useLatestSnapshot, useSaveTaskMap, useTaskMap } from '../hooks/queries'
+import { useLatestSnapshot, useSaveTaskMap, useSnapshotBefore, useTaskMap } from '../hooks/queries'
+import { buildWeeklyReport } from '../lib/report/build'
+import { downloadWeekly } from '../lib/report/render'
+import { currentWeek, rangeLabel } from '../lib/report/week'
+import { REPORT_SUBTITLE, REPORT_TEAM } from '../lib/constants'
 import {
   addEntry,
   claimedIds,
@@ -42,6 +46,8 @@ export default function TaskMapPage() {
   const save = useSaveTaskMap()
 
   const [draft, setDraft] = useState<TaskEntry[] | null>(null)
+  const [building, setBuilding] = useState(false)
+  const [buildError, setBuildError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
 
@@ -59,6 +65,11 @@ export default function TaskMapPage() {
     [state, entries],
   )
   const errors = useMemo(() => validateTaskMap(entries), [entries])
+
+  // 보고 구간은 **방금 끝난 화~월**입니다. 기준일은 스냅샷 날짜 — 오늘 날짜를
+  // 쓰면 오래된 스냅샷으로 최신 주를 만들어 빈 보고서가 나옵니다.
+  const week = snapshot.data ? currentWeek(snapshot.data.day) : null
+  const base = useSnapshotBefore(week?.from ?? null)
   const unmapped = (state?.work.length ?? 0) - claimedIds(entries).size
 
   function edit(next: TaskEntry[]) {
@@ -85,6 +96,35 @@ export default function TaskMapPage() {
     }
     edit(next)
     setPicked(new Set())
+  }
+
+  /**
+   * pptx 는 **브라우저에서** 만들어 바로 내려받습니다. 서버가 없으므로 업무
+   * 내용이 어디로도 전송되지 않습니다.
+   *
+   * 저장하지 않은 편집도 그대로 반영합니다 — 미리 보고 고칠 수 있어야 합니다.
+   */
+  async function onBuild() {
+    if (!state || !snapshot.data || !week) return
+    setBuilding(true)
+    setBuildError(null)
+    try {
+      const out = buildWeeklyReport({
+        state,
+        day: snapshot.data.day,
+        base: (base.data?.state ?? null) as DeskState | null,
+        baseDay: base.data?.day ?? null,
+        entries,
+        author: user?.name ?? '',
+        subtitle: REPORT_SUBTITLE,
+        team: REPORT_TEAM,
+      })
+      await downloadWeekly(out.model, out.nextLabel, out.fileName)
+    } catch (e) {
+      setBuildError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBuilding(false)
+    }
   }
 
   async function onSave() {
@@ -131,6 +171,17 @@ export default function TaskMapPage() {
           항목 미지정 {unmapped}건
         </span>
         <div className="flex-1" />
+        {week && (
+          <button
+            type="button"
+            disabled={building || base.isLoading}
+            onClick={() => void onBuild()}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40"
+            title={`${rangeLabel(week)} 구간으로 만듭니다`}
+          >
+            {building ? '만드는 중…' : '주간보고서 생성'}
+          </button>
+        )}
         {dirty && (
           <button
             type="button"
@@ -170,6 +221,18 @@ export default function TaskMapPage() {
             <li key={e}>{e}</li>
           ))}
         </ul>
+      )}
+
+      {buildError && (
+        <p className="rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-700 ring-1 ring-rose-200">
+          보고서 생성 실패 — {buildError}
+        </p>
+      )}
+
+      {dirty && (
+        <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 ring-1 ring-amber-200">
+          저장하지 않은 편집이 있습니다. 지금 만드는 보고서에는 **화면의 내용이 그대로** 들어갑니다.
+        </p>
       )}
 
       {save.isError && (

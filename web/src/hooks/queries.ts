@@ -468,6 +468,16 @@ export function useSnapshotDays() {
   return useQuery({ queryKey: keys.snapshotDays, queryFn: api.fetchSnapshotDays, staleTime: 600_000 })
 }
 
+/** 주간 diff 의 기준 스냅샷. 구간 시작일이 정해져야 부를 수 있습니다 */
+export function useSnapshotBefore(day: string | null) {
+  return useQuery({
+    queryKey: ['desk-snapshot-before', day],
+    queryFn: () => api.fetchSnapshotBefore(day!),
+    enabled: Boolean(day),
+    staleTime: 600_000,
+  })
+}
+
 export function useTaskMap() {
   return useQuery({ queryKey: keys.taskMap, queryFn: api.fetchTaskMap })
 }
