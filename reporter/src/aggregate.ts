@@ -9,7 +9,6 @@
  */
 
 import { mergedLabel } from './taskmap.ts'
-import { heldItems } from './weekly.ts'
 import type {
   DeskDecision,
   DeskProject,
@@ -117,6 +116,30 @@ export function rowProgress(work: DeskWork, chip: ChipKind): number | null {
   if (chip === 'done') return 100
   if (typeof work.progress === 'number') return work.progress
   return null
+}
+
+/**
+ * 보류 중인 업무 — 3장 이슈 절에 올립니다.
+ *
+ * **표에서 빼되 보고서에서 지우지는 않습니다.** 멈춰 있다는 사실 자체가
+ * 이슈이고, 조용히 빼면 그 일이 애초에 없었던 것처럼 보입니다.
+ * desk 에 보류 사유 필드가 없어 담당자와 소속만 적습니다.
+ */
+export function heldItems(state: DeskState): { label: string; body: string }[] {
+  const projects = new Map(state.projects.map((p) => [p.key, p.title]))
+  return state.work
+    .filter((w) => w.status === 'hold')
+    .map((w) => ({
+      label: w.title,
+      body: [
+        '보류',
+        (w.owner ?? '').trim() || null,
+        w.project ? projects.get(w.project) : null,
+        (w.detail?.notes ?? w.assessment ?? '').trim() || null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    }))
 }
 
 /**

@@ -100,10 +100,6 @@
   <span class="badge" id="bBroken"></span>
   <span class="badge" id="bHidden"></span>
   <div class="spacer"></div>
-  <div class="gauge">
-    <span id="gaugeText" class="meta"></span>
-    <div class="track"><div class="fill" id="gaugeFill"></div></div>
-  </div>
   <button id="btnMerge" disabled>선택 묶기</button>
   <button id="btnExclude" disabled>선택 제외</button>
   <button id="btnSave" class="primary" disabled>저장</button>
@@ -182,17 +178,11 @@ function entryTitle(e) {
  */
 function draw() {
   const by = workById()
-  $('meta').textContent = `스냅샷 ${data.snapshot.day} · 업무 ${data.snapshot.work}건 · ${data.budget.week}`
+  $('meta').textContent = `스냅샷 ${data.snapshot.day} · 업무 ${data.snapshot.work}건`
 
   badge('bUnmapped', `항목 미지정 ${data.works.length - claimed().size}건`, 'warn', true)
   badge('bBroken', `끊어진 참조 ${data.issues.broken.length}건`, 'bad', data.issues.broken.length > 0)
   badge('bHidden', `제외 ${data.issues.hidden}건`, '', data.issues.hidden > 0)
-
-  const b = data.budget
-  const pct = Math.min(100, (b.needed / b.budget) * 100)
-  $('gaugeFill').style.width = pct + '%'
-  $('gaugeFill').className = 'fill' + (b.fits ? '' : ' over')
-  $('gaugeText').textContent = `1page ${b.needed.toFixed(2)} / ${b.budget.toFixed(2)}인치` + (b.fits ? '' : ' — 넘칩니다')
 
   $('btnSave').disabled = !dirty
   $('btnMerge').disabled = picked.size < 1
@@ -245,7 +235,6 @@ function previewBudget() {
     })
     if (!r.ok) return
     const j = await r.json()
-    data.budget = j.budget
     data.issues = j.issues
     data.entryViews = j.entryViews
     // 항목의 기간·진척과 제외 뱃지가 이 응답에 실려 오므로 다시 그립니다

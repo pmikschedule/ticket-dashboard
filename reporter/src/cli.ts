@@ -1,10 +1,12 @@
 #!/usr/bin/env -S npx tsx
 /**
- * CLI — `doctor` · `scan` · `weekly` · `monthly` · `list` · `ui`.
+ * CLI — `doctor` · `scan` · `push` · `monthly` · `list` · `ui`.
+ *
+ * **주간 보고서는 여기 없습니다.** 이슈트래커의 태스크맵 화면에서 만듭니다
+ * (`web/src/lib/report/`). 집계 규칙을 두 벌 두지 않기 위해서입니다.
  *
  *   scan             desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
  *   push             밀린 스냅샷·태스크 맵을 대시보드에 올립니다 (scan 없이)
- *   weekly [YYYY-MM-DD] 주간 업무 보고 pptx (화~월 구간, 끝나는 월요일로 지정)
  *   monthly [YYYY-MM] 그 달의 보고서 pptx 를 만듭니다 (기본: 지난달)
  *   list             업무 전수 목록 xlsx 를 만듭니다 (프로젝트별 · 담당자별)
  *   ui               태스크 맵 편집 화면 (localhost)
@@ -23,18 +25,12 @@ import {
   previousDueDates,
   readSnapshot,
   saveSnapshot,
-  snapshotAfter,
-  snapshotBefore,
-  snapshotsBefore,
 } from './desk.ts'
 import { fetchTickets, signIn } from './dashboard.ts'
 import { buildReport, countByWorkType } from './aggregate.ts'
-import { ISSUES, STANDALONE_RULE, TABLE, WEEKLY_PROGRESS } from './layout.ts'
+import { TABLE } from './layout.ts'
 import { writeReport } from './render.ts'
 import { buildWorkList, summarizeByOwner } from './worklist.ts'
-import { buildWeekly } from './weekly.ts'
-import { writeWeekly } from './weeklyRender.ts'
-import { currentWeek, nextWeek, parseWeekLabel, rangeLabel } from './week.ts'
 import { applyTaskMap, loadTaskMap, mapFootnotes } from './taskmap.ts'
 import { startUi } from './ui.ts'
 import { uploadSnapshot, uploadTaskMap, uploadedDays } from './upload.ts'
@@ -235,95 +231,6 @@ async function cmdMonthly(argMonth?: string) {
 }
 
 /**
- * 주간 업무 보고.
- *
- * **지난주 스냅샷과 대조**해 변화(완료·착수·신규·일정변경·마일스톤 증가)를 냅니다.
- * 비교 대상이 없으면 만들기를 거부하지 않고 **기준 주차**로 냅니다 — 첫 주에도
- * 현재 상태는 보고할 수 있어야 하고, 비교가 없었다는 사실은 슬라이드에 적힙니다.
- */
-async function cmdWeekly(argWeek?: string) {
-  const newest = latestSnapshot(cfg.snapshotDir)
-  if (!newest) {
-    throw new Error('스냅샷이 없습니다. 먼저 `npm run scan` 을 한 번 실행하세요.')
-  }
-  const scannedOn = newest.meta.scannedAt.slice(0, 10)
-
-  // 기본은 **방금 끝난 구간** — 가장 최근 월요일로 끝나는 화~월 7일입니다.
-  // 기준일은 스냅샷 날짜입니다. 오늘 날짜를 쓰면 오래된 스냅샷으로 최신 주를
-  // 만들게 되어, 비어 있는 보고서가 나옵니다.
-  const week = argWeek ? parseWeekLabel(argWeek) : currentWeek(scannedOn)
-  if (!week) {
-    throw new Error(`주간 지정이 잘못됐습니다: ${argWeek} — 끝나는 **월요일**을 YYYY-MM-DD 로 주세요 (예: 2026-08-10)`)
-  }
-
-  // 구간이 끝난 뒤 처음 뜬 스냅샷이 그 주의 마감 상태입니다. 아직 안 떴으면
-  // 최신 것을 쓰되, 구간 밖이라는 사실을 각주에 남깁니다.
-  const snap = snapshotAfter(cfg.snapshotDir, week.to) ?? newest
-  const snapDay = snap.meta.scannedAt.slice(0, 10)
-
-  say(`주간 업무 보고 — ${rangeLabel(week)}`)
-  say(`  스냅샷 : ${snapDay} (work ${snap.meta.counts.work})`)
-
-  const base = snapshotBefore(cfg.snapshotDir, week.from)
-  if (base) {
-    const baseDay = base.meta.scannedAt.slice(0, 10)
-    say(`  비교   : ${baseDay} 스냅샷 대비`)
-  } else {
-    say('  비교   : 없음 — 기준 주차로 만듭니다 (스냅샷이 한 주치뿐)')
-  }
-
-  // 기준 스냅샷에도 **같은 맵**을 적용합니다. 한쪽만 적용하면 통합 항목이
-  // 지난주엔 없던 것으로 보여 전부 '금주 신규' 가 됩니다.
-  const now = mapped(snap.state)
-  const before = base ? mapped(base.state).state : null
-  if (now.entries > 0) {
-    say(`  태스크맵: 항목 ${now.entries}개 적용 · 항목 미지정 ${now.issues.unmapped}건`)
-  }
-
-  const model = buildWeekly(before, now.state, {
-    week,
-    nextWeek: nextWeek(week),
-    author: cfg.author,
-    reportedOn: snapDay,
-    subtitle: cfg.subtitle,
-    team: cfg.team,
-    baseline: base ? base.meta.scannedAt.slice(0, 10) : null,
-    history: snapshotsBefore(cfg.snapshotDir, week.from, 2).map((x) => mapped(x.state).state),
-    table: {
-      budget: TABLE.bottom - TABLE.top,
-      headerH: TABLE.groupH,
-      ruleH: STANDALONE_RULE.h,
-      rowH: TABLE.rowH,
-    },
-    maxProgress: WEEKLY_PROGRESS.max,
-    maxChanges: ISSUES.max,
-  })
-
-  mkdirSync(cfg.outDir, { recursive: true })
-  if (snapDay > week.to) {
-    // 그 주 마감 뒤에 뜬 스냅샷이 없어 이후 상태로 만들었다는 사실을 밝힙니다
-    footnoteLate(model, week.to, snapDay)
-  }
-  model.footnotes.push(...mapFootnotes(now.issues, now.entries > 0))
-
-  const out = join(cfg.outDir, `주간업무보고_${week.id}.pptx`)
-  await writeWeekly(model, rangeLabel(nextWeek(week)), out)
-
-  const s = model.summary
-  say(`  변화   : 완료 ${s.done} · 착수 ${s.started} · 신규 ${s.added} · 진행 ${s.ing} · 지연 ${s.late}`)
-  say(`  묶음   : 프로젝트 ${model.groups.filter((g) => !g.standalone).length}개` +
-      (model.groups.some((g) => g.standalone) ? ' + 개별 업무' : ''))
-  say(`  진척   : 프로젝트 ${model.progress.length}개 (마일스톤 있는 것만)`)
-  for (const f of model.footnotes) say(`  각주   : ${f}`)
-  say(`  생성   : ${out}`)
-}
-
-/** 구간 마감보다 늦은 스냅샷을 썼다는 각주. 조용히 넘기면 그 주 상태로 오해합니다 */
-function footnoteLate(model: { footnotes: string[] }, weekTo: string, snapDay: string) {
-  model.footnotes.push(`구간 마감(${weekTo}) 이후 스냅샷(${snapDay}) 기준`)
-}
-
-/**
  * 업무 전수 목록.
  *
  * 보고서와 달리 **달로 거르지 않고 자르지도 않습니다.** 스냅샷에 있는 업무가
@@ -413,14 +320,13 @@ const [cmd, arg] = process.argv.slice(2)
 
 try {
   if (cmd === 'scan') await cmdScan()
-  else if (cmd === 'weekly') await cmdWeekly(arg)
   else if (cmd === 'monthly') await cmdMonthly(arg)
   else if (cmd === 'list') await cmdList()
   else if (cmd === 'push') await cmdPush()
   else if (cmd === 'ui') await cmdUi()
   else if (cmd === 'doctor') await cmdDoctor()
   else {
-    say('사용법: reporter <scan|push|weekly [YYYY-MM-DD(월)]|monthly [YYYY-MM]|list|ui|doctor>')
+    say('사용법: reporter <scan|push|monthly [YYYY-MM]|list|ui|doctor>')
     process.exit(2)
   }
 } catch (e) {

@@ -1,6 +1,10 @@
 /**
  * 태스크 맵 UI — 로컬 웹 서버.
  *
+ * **편집의 본거지는 이제 이슈트래커입니다** (`web/` 의 태스크맵 메뉴). 여기는
+ * 대시보드에 못 붙는 상황에서 쓰는 예비 화면이라, 1page 예산 게이지처럼 주간
+ * 집계가 필요한 것은 빠졌습니다 — 그 계산은 web 으로 옮겨 갔습니다.
+ *
  * **`127.0.0.1` 에만 바인딩합니다.** 인증이 없는 도구이고, desk 의 업무 내용을
  * 그대로 보여 주기 때문입니다. 이 Mac 밖에서는 열리지 않아야 합니다.
  *
@@ -15,7 +19,7 @@ import { createServer } from 'node:http'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { latestSnapshot, snapshotBefore } from './desk.ts'
+import { latestSnapshot } from './desk.ts'
 import {
   applyTaskMap,
   entrySpan,
@@ -25,53 +29,9 @@ import {
   type TaskMap,
 } from './taskmap.ts'
 import { suggest } from './suggest.ts'
-import { buildWeekly } from './weekly.ts'
-import { currentWeek, nextWeek, rangeLabel as rangeLabelOf } from './week.ts'
-import { ISSUES, STANDALONE_RULE, TABLE, WEEKLY_PROGRESS } from './layout.ts'
 import type { Config } from './config.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
-
-/**
- * 1page 예산.
- *
- * 표 영역은 3.20인치 고정이고 프로젝트 머리행 0.20 · 구분선 0.16 · 업무 행 0.26 이
- * 자리를 먹습니다. **편집하는 동안 지금 구성이 한 장에 들어가는지 보여야** 다
- * 만들고 나서 잘리는 일이 없습니다. 그래서 자르기 전 높이를 따로 계산합니다.
- */
-function budgetOf(state: ReturnType<typeof applyTaskMap>['state'], base: typeof state | null, day: string) {
-  const week = currentWeek(day)
-  const uncut = buildWeekly(base, state, {
-    week,
-    nextWeek: nextWeek(week),
-    author: '',
-    reportedOn: day,
-    subtitle: '',
-    team: '',
-    baseline: base ? day : null,
-    history: [],
-    // 자르지 않고 전부 받아 실제로 몇 인치가 필요한지 봅니다
-    table: { budget: Number.MAX_SAFE_INTEGER, headerH: TABLE.groupH, ruleH: STANDALONE_RULE.h, rowH: TABLE.rowH },
-    maxProgress: WEEKLY_PROGRESS.max,
-    maxChanges: ISSUES.max,
-  })
-
-  const heads = uncut.groups.reduce(
-    (n, g) => n + (g.standalone ? STANDALONE_RULE.h : TABLE.groupH),
-    0,
-  )
-  const rows = uncut.groups.reduce((n, g) => n + g.rows.length, 0)
-  const needed = heads + rows * TABLE.rowH
-
-  return {
-    needed: Math.round(needed * 100) / 100,
-    budget: TABLE.bottom - TABLE.top,
-    groups: uncut.groups.length,
-    rows,
-    fits: needed <= TABLE.bottom - TABLE.top + 1e-9,
-    week: rangeLabelOf(week),
-  }
-}
 
 /**
  * `override` 는 **아직 저장하지 않은 맵**입니다.
@@ -87,9 +47,6 @@ function payload(cfg: Config, override?: TaskMap) {
   const map = override ?? loadTaskMap(cfg.taskmapPath)
   const applied = applyTaskMap(snap.state, map)
   const byId = new Map(snap.state.work.map((w) => [w.id, w]))
-
-  const baseSnap = snapshotBefore(cfg.snapshotDir, currentWeek(day).from)
-  const base = baseSnap ? applyTaskMap(baseSnap.state, map).state : null
 
   return {
     snapshot: { day, work: snap.state.work.length },
@@ -119,7 +76,6 @@ function payload(cfg: Config, override?: TaskMap) {
     taskmap: map,
     issues: applied.issues,
     suggestions: suggest(snap.state, map),
-    budget: budgetOf(applied.state, base, day),
   }
 }
 
@@ -157,12 +113,7 @@ export function startUi(cfg: Config, onReady?: (url: string) => void) {
         // 그 순간에도 예산은 보여야 합니다. 저장에서만 막습니다.
         const map = JSON.parse(await readBody(req)) as TaskMap
         const p = payload(cfg, map)
-        json(res, 200, {
-          budget: p.budget,
-          issues: p.issues,
-          suggestions: p.suggestions,
-          entryViews: p.entryViews,
-        })
+        json(res, 200, { issues: p.issues, suggestions: p.suggestions, entryViews: p.entryViews })
         return
       }
 

@@ -3,14 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "desk + 티켓 대시보드 → 활동 월간 요약 보고서(pptx) 생성기",
+  "description": "desk 수집기 + 월간 보고서·업무 목록 생성 (주간 보고서는 이슈트래커에서)",
   "bin": {
     "reporter": "./src/cli.ts"
   },
   "scripts": {
     "scan": "tsx src/cli.ts scan",
     "push": "tsx src/cli.ts push",
-    "weekly": "tsx src/cli.ts weekly",
     "monthly": "tsx src/cli.ts monthly",
     "list": "tsx src/cli.ts list",
     "ui": "tsx src/cli.ts ui",

@@ -20,13 +20,17 @@
 supabase/schema.sql   테이블 8개 + RLS + Storage + 통계 뷰 (한 파일, 재실행 안전)
 agent/                Local PC 에이전트 (Python) — 메일 수집·분류·적재, 완료 회신 발송
 web/                  React 대시보드 — 칸반·리스트·상세·통계·태스크맵
-reporter/             주간·월간 보고서 생성기 (Node) — desk + 대시보드 → pptx·xlsx
+reporter/             desk 수집기 + 월간 보고서 (Node) — 주간은 web 이 만듭니다
 ```
 
 `reporter/` 는 이 시스템의 일부가 아니라 **이 시스템에 붙어 사는 도구**입니다.
 대시보드에서 티켓을 대분류 3종(장애·유지보수·신규개발) 다 읽고, desk 라는 별개
 시스템의 업무 현황과 합쳐 보고서를 만듭니다. 자세한 것은
 [reporter/README.md](reporter/README.md).
+
+**주간 보고서는 `web/src/lib/report/` 가 만듭니다.** 태스크맵 화면의 버튼으로
+브라우저에서 pptx 를 내려받습니다 — 집계 규칙을 두 벌 두면 갈라지기 때문에
+주간 쪽 코드는 통째로 그쪽에 있습니다. reporter 에는 월간과 업무 목록만 남습니다.
 
 **읽기 전용이 아닙니다.** desk 스냅샷과 태스크 맵은 대시보드 DB 에 씁니다
 (`desk_snapshots`·`task_map`, schema.sql 24장). desk 인증이 특정 Mac 의 Chrome
@@ -140,7 +144,6 @@ cd agent    && ticket-agent doctor         # 설정·연결 점검
 cd reporter && npm test                    # 집계·레이아웃 229개 + 타입체크
 cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
 cd reporter && npm run push                # 밀린 스냅샷만 올리기
-cd reporter && npm run weekly              # 주간 업무 보고 pptx (화~월 구간)
 cd reporter && npm run monthly             # 지난달 보고서 pptx
 cd reporter && npm run list                # 업무 전수 목록 xlsx
 cd reporter && npm run ui                  # 태스크 맵 편집 화면
