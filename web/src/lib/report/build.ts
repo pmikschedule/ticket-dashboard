@@ -6,7 +6,18 @@
  */
 
 import { applyTaskMap, mapFootnotes } from './apply'
-import { ISSUES, STANDALONE_RULE, TABLE } from './layout'
+import {
+  ISSUES,
+  ISSUES_COMPACT,
+  ISSUES_PAGE,
+  PLANS,
+  PLANS_COMPACT,
+  PLANS_PAGE,
+  STANDALONE_RULE,
+  TABLE,
+  TABLE_CONT,
+  TABLE_FIT,
+} from './layout'
 import type { TaskEntry } from '../taskmap'
 import type { ReportTicket } from './ops'
 import type { DeskState } from './types'
@@ -59,13 +70,30 @@ export function buildWeeklyReport(input: BuildInput): BuildOutput {
     // 과거 스냅샷을 여러 개 내려받지 않으므로 비워 두고, 못 잰다는 사실은
     // buildWeekly 가 각주에 적습니다.
     history: [],
+    // 표가 넘칠 때 어디를 줄일지의 순서입니다. **진행 현황은 안 줄입니다** —
+    // 3·4장을 압축하고(compact), 그래도 모자라면 다음 장으로 내립니다(spill).
     table: {
-      budget: TABLE.bottom - TABLE.top,
+      layouts: [
+        { mode: 'base', budget: TABLE.bottom - TABLE.top, maxChanges: ISSUES.max, maxPlans: PLANS.max },
+        {
+          mode: 'compact',
+          budget: TABLE_FIT.compactBottom - TABLE.top,
+          maxChanges: ISSUES_COMPACT.max,
+          maxPlans: PLANS_COMPACT.max,
+        },
+        {
+          mode: 'spill',
+          budget: TABLE_FIT.fullBottom - TABLE.top,
+          maxChanges: ISSUES_PAGE.max,
+          maxPlans: PLANS_PAGE.max,
+        },
+      ],
+      contBudget: TABLE_CONT.bottom - TABLE_CONT.top,
       headerH: TABLE.groupH,
       ruleH: STANDALONE_RULE.h,
       rowH: TABLE.rowH,
+      maxPages: TABLE_FIT.maxPages,
     },
-    maxChanges: ISSUES.max,
     tickets: input.tickets,
   })
 

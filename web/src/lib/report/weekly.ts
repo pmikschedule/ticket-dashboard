@@ -67,6 +67,8 @@ export interface WeeklyGroup {
   title: string
   /** 프로젝트가 아니라 독립 항목 묶음이면 true — 렌더러가 머리행을 그리지 않습니다 */
   standalone: boolean
+  /** 앞 장에서 이어진 묶음. 머리행에 '(계속)' 이 붙습니다 */
+  continued: boolean
   owners: string[]
   counts: { done: number; started: number; ing: number; late: number; added: number }
   milestones: { done: number; total: number } | null
@@ -84,8 +86,14 @@ export interface WeeklyModel {
 
   summary: { done: number; started: number; ing: number; late: number; added: number }
 
-  /** 프로젝트 묶음 → 하위 태스크. 독립 항목 묶음이 맨 뒤에 하나 붙습니다 */
-  groups: WeeklyGroup[]
+  /**
+   * 표 장(章)들. **한 장에 안 들어가면 잘라내지 않고 장을 늘립니다** —
+   * 진행 현황은 이 보고서의 본문이고, 목록에 있는 것은 다 실립니다.
+   * 묶음 하나가 두 장에 걸치면 뒷장 머리행에 `continued` 가 섭니다.
+   */
+  pages: WeeklyGroup[][]
+  /** 3·4장을 어디에 그리는지. `spill` 이면 별도 장입니다 */
+  layout: WeeklyLayout
 
   /** 2장 — 티켓 대시보드의 그 주 접수 현황 */
   ops: OpsSummary
@@ -305,6 +313,7 @@ export function groupWork(
       key,
       title,
       standalone,
+      continued: false,
       owners: [...new Set(rows.map((r) => r.owner))],
       counts: {
         done: rows.filter((r) => r.chip === 'done').length,
@@ -362,13 +371,18 @@ export function heldItems(state: DeskState): { label: string; body: string }[] {
     }))
 }
 
-/** 차주 계획 — 다음 주가 마감인 미완료 업무. 지어내지 않고 desk 의 일정만 옮깁니다 */
-export function selectPlans(state: DeskState, next: Week, max: number): string[] {
-  return state.work
+/**
+ * 차주 계획 — 다음 주가 마감인 미완료 업무. 지어내지 않고 desk 의 일정만 옮깁니다.
+ *
+ * `max` 로 자르는 것은 지면 사정이고, **몇 건 중 몇 건인지는 부르는 쪽이 알아야**
+ * 각주에 적을 수 있습니다. 그래서 자른 목록과 전체 건수를 같이 돌려줍니다.
+ */
+export function selectPlans(state: DeskState, next: Week, max: number): { items: string[]; total: number } {
+  const all = state.work
     .filter((w) => w.status !== 'done' && inWeek(w.due, next))
     .sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
     .map((w) => `${w.title} (${shortDate(w.due)}${w.owner ? ` · ${w.owner}` : ''})`)
-    .slice(0, max)
+  return { items: all.slice(0, max), total: all.length }
 }
 
 export interface WeeklyOptions {
@@ -380,10 +394,8 @@ export interface WeeklyOptions {
   baseline: string | null
   /** 정체 판정용 과거 스냅샷들 (오래된 것부터). 2개 미만이면 정체를 안 냅니다 */
   history?: DeskState[]
-  /** 표 영역 높이(인치)와 각 줄 높이. 넘치면 잘라내고 각주에 적습니다 */
-  table: { budget: number; headerH: number; ruleH: number; rowH: number }
-  /** 3장에 들어가는 변화 줄 수 */
-  maxChanges: number
+  /** 표 배치. 넘치면 3·4장을 줄이거나 내려보내고, 그래도 넘치면 장을 늘립니다 */
+  table: WeeklyTableOptions
   /** 그 주 운영 현황의 원천. 대시보드를 못 읽었으면 빈 배열 */
   tickets: ReportTicket[]
 }
@@ -398,9 +410,6 @@ export function buildWeekly(
   const all = groupWork(state, d, opt.week, asOf, opt.baseline !== null)
 
   const totalRows = all.reduce((n, g) => n + g.rows.length, 0)
-  const groups = fitRows(all, opt.table)
-  const shown = groups.reduce((n, g) => n + g.rows.length, 0)
-
   const flat = all.flatMap((g) => g.rows)
   const summary = {
     done: flat.filter((r) => r.chip === 'done').length,
@@ -429,6 +438,13 @@ export function buildWeekly(
   }
 
   const allChanges = changes.length
+  const allPlans = selectPlans(state, opt.nextWeek, Number.POSITIVE_INFINITY)
+
+  // **자리는 여기서 정해집니다.** 3·4장에 실을 것이 몇 건인지 알아야 "압축하면
+  // 이슈가 지워지는가" 를 볼 수 있고, 지워진다면 압축 대신 다음 장으로 내립니다.
+  const fitted = fitTable(all, opt.table, { changes: allChanges, plans: allPlans.total })
+  const shown = fitted.pages.reduce((n, page) => n + page.reduce((k, g) => k + g.rows.length, 0), 0)
+  const plans = { items: allPlans.items.slice(0, fitted.maxPlans), total: allPlans.total }
   // 마일스톤이 없는 프로젝트는 레일에 그릴 것이 없어 빠집니다. 몇 개인지 적습니다.
   const railless = state.projects.length - projectRails(state).length
   const held = heldItems(state).length
@@ -439,13 +455,19 @@ export function buildWeekly(
     footnotes.push('기준 주차 — 지난주 스냅샷이 없어 변화분(완료·착수·신규·일정변경)을 산출하지 않았습니다')
   }
   if (shown < totalRows) {
+    // 장 수 상한(TABLE_FIT.maxPages)까지 갔는데도 남은 경우에만 나옵니다
     footnotes.push(`업무 ${totalRows}건 중 ${shown}건 표기`)
+  } else if (fitted.pages.length > 1) {
+    footnotes.push(`업무 ${totalRows}건을 표 ${fitted.pages.length}장에 나눠 실었습니다`)
   }
   if ((opt.history ?? []).length < 2) {
     footnotes.push('정체(3주 연속 무변화)는 스냅샷 3주치가 쌓여야 판정합니다')
   }
-  if (allChanges > opt.maxChanges) {
-    footnotes.push(`변화·지연 ${allChanges}건 중 ${opt.maxChanges}건 표기`)
+  if (allChanges > fitted.maxChanges) {
+    footnotes.push(`변화·지연 ${allChanges}건 중 ${fitted.maxChanges}건 표기`)
+  }
+  if (plans.total > plans.items.length) {
+    footnotes.push(`차주 계획 ${plans.total}건 중 ${plans.items.length}건 표기`)
   }
   if (flat.some((r) => !r.detail)) {
     footnotes.push('진행내용 공란 = desk 에 기록 없음')
@@ -462,61 +484,173 @@ export function buildWeekly(
     subtitle: opt.subtitle,
     baseline: opt.baseline,
     summary,
-    groups,
+    pages: fitted.pages,
+    layout: fitted.mode,
     ops,
     rails: projectRails(state),
-    changes: changes.slice(0, opt.maxChanges),
-    plans: selectPlans(state, opt.nextWeek, 4),
+    changes: changes.slice(0, fitted.maxChanges),
+    plans: plans.items,
     footnotes,
   }
 }
 
 /**
- * 표에 들어가는 만큼만 남깁니다.
+ * 표 배치 — **행을 자르는 대신 자리를 만듭니다.**
  *
- * **행 수가 아니라 인치로 셉니다.** 머리행(0.20)과 업무 행(0.26)의 높이가 달라서
- * 행 수로 세면 예산이 남는데도 행이 잘립니다. 독립 항목 앞의 구분선(0.16)도
- * 자리를 먹으므로 같이 넣습니다 — 빼먹으면 마지막 행이 표 밖으로 흘러나갑니다.
+ * 예전에는 `TABLE.bottom` 하나만 예산으로 두고 넘치면 뒤쪽 행을 버렸습니다.
+ * 그래서 8건짜리 주에도 "8건 중 7건 표기" 라는 각주가 붙었습니다 — 진행 현황은
+ * 이 보고서의 본문이라 거기서 줄이면 보고서가 제 일을 못 합니다.
  *
- * 원칙은 월간과 같습니다.
+ * 그래서 `layouts` 를 앞에서부터 시도합니다 (base → compact → spill). 앞의 것이
+ * 안 들어가면 3·4장을 압축하고, 그래도 안 되면 3·4장을 다음 장으로 내려 왼쪽 단을
+ * 통째로 표에 줍니다. 그러고도 남으면 **표를 이어지는 장에 계속 그립니다.**
  *
- * 1. **머리행·구분선을 업무 행보다 우선합니다.** 프로젝트 목록 자체가 현황이고,
- *    머리행에 금주 변화 건수와 진척율이 있어 업무 행이 없어도 뜻이 통합니다.
- * 2. **남는 높이는 라운드로빈으로.** 앞에서부터 채우면 첫 프로젝트가 다 먹고
- *    뒤쪽 — 특히 맨 뒤에 오는 독립 항목 — 은 한 건도 안 보입니다.
+ * 3·4장의 줄 수(`maxChanges`·`maxPlans`)가 배치마다 다른 것은 자리가 달라지기
+ * 때문입니다. 전용 장으로 내려가면 오히려 **늘어납니다** (이슈 3→9).
  */
-export function fitRows(
-  groups: WeeklyGroup[],
-  table: { budget: number; headerH: number; ruleH: number; rowH: number },
-): WeeklyGroup[] {
-  const EPS = 1e-9
-  const kept: { group: WeeklyGroup; take: number }[] = []
-  let used = 0
+export type WeeklyLayout = 'base' | 'compact' | 'spill'
 
-  for (const g of groups) {
-    const head = g.standalone ? table.ruleH : table.headerH
-    if (used + head > table.budget + EPS) continue
-    used += head
-    kept.push({ group: g, take: 0 })
-  }
-
-  let added = true
-  while (added) {
-    added = false
-    for (const k of kept) {
-      if (k.take >= k.group.rows.length) continue
-      if (used + table.rowH > table.budget + EPS) return finish(kept)
-      used += table.rowH
-      k.take += 1
-      added = true
-    }
-  }
-  return finish(kept)
+export interface WeeklyTableOptions {
+  /** 앞에서부터 시도합니다. 마지막이 `spill` 이어야 합니다 (더 물러설 곳이 없는 배치) */
+  layouts: { mode: WeeklyLayout; budget: number; maxChanges: number; maxPlans: number }[]
+  /** 이어지는 장의 표 예산. 머리말·요약 띠가 없어 1장보다 넉넉합니다 */
+  contBudget: number
+  headerH: number
+  ruleH: number
+  rowH: number
+  /** 이어지는 장의 상한. 여기 걸려서 못 실은 행은 각주에 셉니다 */
+  maxPages: number
 }
 
-function finish(kept: { group: WeeklyGroup; take: number }[]): WeeklyGroup[] {
-  return kept
-    .map((k) => ({ ...k.group, rows: k.group.rows.slice(0, k.take) }))
-    // 구분선만 남고 행이 하나도 없는 독립 항목 묶음은 줄만 낭비합니다
-    .filter((g) => g.rows.length > 0 || !g.standalone)
+export interface FittedTable {
+  mode: WeeklyLayout
+  pages: WeeklyGroup[][]
+  maxChanges: number
+  maxPlans: number
+}
+
+const EPS = 1e-9
+
+/** 묶음 하나가 먹는 높이 — 머리행(또는 구분선) + 업무 행 */
+function groupHeight(g: WeeklyGroup, box: { headerH: number; ruleH: number; rowH: number }): number {
+  return (g.standalone ? box.ruleH : box.headerH) + g.rows.length * box.rowH
+}
+
+/** 전부 그리는 데 필요한 높이(인치). **행 수가 아니라 인치입니다** — 머리행 높이가 다릅니다 */
+export function tableHeight(
+  groups: WeeklyGroup[],
+  box: { headerH: number; ruleH: number; rowH: number },
+): number {
+  return groups.reduce((h, g) => h + groupHeight(g, box), 0)
+}
+
+/**
+ * 3·4장에 실어야 할 건수. **압축이 이것을 지우는지** 판정하는 데 씁니다.
+ */
+export interface SectionDemand {
+  changes: number
+  plans: number
+}
+
+export function fitTable(
+  groups: WeeklyGroup[],
+  opt: WeeklyTableOptions,
+  demand: SectionDemand = { changes: 0, plans: 0 },
+): FittedTable {
+  const need = tableHeight(groups, opt)
+  const layouts = opt.layouts
+  /**
+   * 원래 자리(`base`)는 예산만 봅니다 — 3·4장이 원래 자리에서 넘치는 것은
+   * 표와 상관없는 일이고, 그것 때문에 보고서 구성을 바꾸지는 않습니다.
+   *
+   * 반면 **압축은 표 때문에 3·4장을 줄이는 선택**입니다. 줄여서 실제로 이슈나
+   * 계획이 지워진다면 압축하지 않고 다음 장으로 내립니다 — 내려보내면 둘 다
+   * 지우지 않고 실을 수 있는데 표 자리 때문에 이슈를 감출 이유가 없습니다.
+   */
+  const fits = (l: (typeof layouts)[number]) =>
+    need <= l.budget + EPS &&
+    (l.mode === 'base' || (demand.changes <= l.maxChanges && demand.plans <= l.maxPlans))
+  const chosen = layouts.find(fits) ?? layouts[layouts.length - 1]!
+
+  // 한 장에 들어가면 쪽을 나눌 것도 없습니다
+  if (need <= chosen.budget + EPS) {
+    return { mode: chosen.mode, pages: [groups], maxChanges: chosen.maxChanges, maxPlans: chosen.maxPlans }
+  }
+  return {
+    mode: chosen.mode,
+    pages: paginateGroups(groups, {
+      first: chosen.budget,
+      cont: opt.contBudget,
+      headerH: opt.headerH,
+      ruleH: opt.ruleH,
+      rowH: opt.rowH,
+      maxPages: opt.maxPages,
+    }),
+    maxChanges: chosen.maxChanges,
+    maxPlans: chosen.maxPlans,
+  }
+}
+
+export interface PageBox {
+  /** 1장의 표 예산 */
+  first: number
+  /** 이어지는 장의 표 예산 */
+  cont: number
+  headerH: number
+  ruleH: number
+  rowH: number
+  maxPages: number
+}
+
+/**
+ * 장을 나눕니다.
+ *
+ * **묶음이 잘리면 뒷장에 머리행을 다시 세웁니다** (`continued`). 머리행 없이
+ * 행만 이어 붙이면 그 행들이 어느 프로젝트의 것인지 뒷장만 본 사람은 알 수
+ * 없습니다. 머리행이 한 번 더 자리를 먹지만, 자리보다 뜻이 먼저입니다.
+ *
+ * 머리행만 놓이고 행이 하나도 안 들어가는 장 끝은 만들지 않습니다 — 그 머리행은
+ * 다음 장으로 통째로 넘어갑니다.
+ */
+export function paginateGroups(groups: WeeklyGroup[], box: PageBox): WeeklyGroup[][] {
+  const pages: WeeklyGroup[][] = []
+  let page: WeeklyGroup[] = []
+  let used = 0
+  let cap = box.first
+
+  const flush = () => {
+    pages.push(page)
+    page = []
+    used = 0
+    cap = box.cont
+  }
+
+  for (const g of groups) {
+    const head = g.standalone ? box.ruleH : box.headerH
+    let i = 0
+    let first = true
+
+    do {
+      if (used + head + box.rowH > cap + EPS && page.length > 0) {
+        if (pages.length + 1 >= box.maxPages) return finish(pages, page)
+        flush()
+      }
+      const room = Math.max(0, Math.floor((cap - used - head + EPS) / box.rowH))
+      // 예산이 한 줄도 못 받는 장(있을 수 없지만 무한 루프는 막습니다)
+      if (room === 0 && g.rows.length > 0) return finish(pages, page)
+
+      const take = Math.min(room, g.rows.length - i)
+      page.push({ ...g, rows: g.rows.slice(i, i + take), continued: !first })
+      used += head + take * box.rowH
+      i += take
+      first = false
+    } while (i < g.rows.length)
+  }
+
+  return finish(pages, page)
+}
+
+function finish(pages: WeeklyGroup[][], page: WeeklyGroup[]): WeeklyGroup[][] {
+  const all = page.length > 0 ? [...pages, page] : pages
+  return all.length > 0 ? all : [[]]
 }

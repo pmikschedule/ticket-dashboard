@@ -14,7 +14,11 @@ import {
   FOOT,
   HEAD,
   ISSUES,
+  ISSUES_COMPACT,
+  ISSUES_PAGE,
   PLANS,
+  PLANS_COMPACT,
+  PLANS_PAGE,
   SECTION_POS,
   SLIDE,
   STANDALONE_RULE,
@@ -22,6 +26,7 @@ import {
   RAIL_CHIP,
   SUMMARY,
   TABLE,
+  TABLE_CONT,
   WEEKLY_CHIP,
   WEEKLY_OPS,
   WORK_TYPE_STYLE,
@@ -87,15 +92,19 @@ function renderSummary(s: Slide, m: WeeklyModel) {
   )
 }
 
-/** 1장 — 프로젝트 → 하위 태스크. 프로젝트 없는 업무는 아래에 독립 항목으로 */
-function renderTable(s: Slide, m: WeeklyModel) {
-  sectionTitle(s, SECTION_POS.s1, '1. 금주 진행 현황 (프로젝트 · 담당자)')
-
-  rect(s, TABLE.x, TABLE.headY, TABLE.w, TABLE.headH, C.NAVY)
+/**
+ * 1장 — 프로젝트 → 하위 태스크. 프로젝트 없는 업무는 아래에 독립 항목으로.
+ *
+ * **한 장 분량(`page`)만 받습니다.** 몇 장이 되는지, 어디서 끊는지는
+ * `weekly.paginateGroups` 가 이미 정했습니다 — 여기서 다시 재지 않습니다.
+ * `geom` 은 그 장의 표 시작 위치입니다 (1장과 이어지는 장이 다릅니다).
+ */
+function renderTable(s: Slide, page: WeeklyGroup[], geom: { headY: number; top: number }) {
+  rect(s, TABLE.x, geom.headY, TABLE.w, TABLE.headH, C.NAVY)
   for (const c of TABLE.headCells) {
     text(s, c.label, {
       x: c.x,
-      y: TABLE.headY,
+      y: geom.headY,
       w: c.w,
       h: TABLE.headH,
       sz: TABLE.headSz,
@@ -105,9 +114,9 @@ function renderTable(s: Slide, m: WeeklyModel) {
     })
   }
 
-  let y = TABLE.top
+  let y = geom.top
 
-  if (m.groups.length === 0) {
+  if (page.length === 0) {
     rect(s, TABLE.x, y, TABLE.w, TABLE.rowH, C.WHITE)
     text(s, '이번 주에 진행된 업무가 없습니다', {
       x: TABLE.cols.title.x,
@@ -120,7 +129,7 @@ function renderTable(s: Slide, m: WeeklyModel) {
     y += TABLE.rowH
   }
 
-  for (const g of m.groups) {
+  for (const g of page) {
     if (g.standalone) {
       renderStandaloneRule(s, y)
       y += STANDALONE_RULE.h
@@ -156,7 +165,16 @@ function renderGroupHeader(s: Slide, g: WeeklyGroup, y: number) {
   rect(s, TABLE.x, y, TABLE.w, h, t.fill)
   rect(s, TABLE.x + 0.07, y + t.accent.dy, t.accent.w, t.accent.h, C.NAVY)
 
-  text(s, g.title, { x: t.title.x, y, w: t.title.w, h, sz: t.title.sz, color: C.NAVY, bold: true })
+  // 앞 장에서 이어졌으면 밝힙니다. 뒷장만 본 사람에게는 이 머리행이 처음입니다
+  text(s, g.continued ? `${g.title} (계속)` : g.title, {
+    x: t.title.x,
+    y,
+    w: t.title.w,
+    h,
+    sz: t.title.sz,
+    color: C.NAVY,
+    bold: true,
+  })
 
   // 머리행 건수는 **자르기 전 전체**입니다. 행이 접혀도 몇 건이었는지는 남습니다.
   const parts: string[] = []
@@ -399,60 +417,113 @@ function renderOps(s: Slide, m: WeeklyModel) {
   })
 }
 
+/**
+ * 3·4장은 **세 자리** 중 하나에 그려집니다 (`m.layout`).
+ *
+ * 자리마다 좌표와 줄 수가 다를 뿐 그리는 내용은 같아서, 상자를 받아 그립니다.
+ * 여기서 개수를 다시 자르지 않습니다 — `m.changes`·`m.plans` 는 이미 그 자리에
+ * 맞게 잘린 목록이고, 두 곳에서 자르면 각주의 건수와 화면이 갈라집니다.
+ */
+interface IssueBox {
+  panel: { x: number; y: number; w: number; h: number }
+  firstY: number
+  gap: number
+  tick: { x: number; w: number; h: number; dy: number }
+  text: { x: number; w: number; h: number; sz: number }
+}
+
+interface PlanBox {
+  panel: { x: number; y: number; w: number; h: number }
+  firstY: number
+  gap: number
+  dot: { x: number; w: number; h: number; dy: number }
+  text: { x: number; w: number; h: number; sz: number }
+}
+
 /** 3장 — 일정 변경 · 정체 · 지연 */
-function renderChanges(s: Slide, m: WeeklyModel) {
-  sectionTitle(s, SECTION_POS.s3, '3. 이슈 — 일정 변경 · 보류 · 지연 · 정체')
-  const p = ISSUES.panel
+function renderChanges(s: Slide, m: WeeklyModel, pos: { x: number; y: number; w: number }, box: IssueBox) {
+  sectionTitle(s, pos, '3. 이슈 — 일정 변경 · 보류 · 지연 · 정체')
+  const p = box.panel
   round(s, p.x, p.y, p.w, p.h, C.PANEL)
 
   if (m.changes.length === 0) {
     text(s, m.baseline ? '해당 없음' : '비교 대상이 없어 변화를 산출하지 않았습니다', {
-      x: ISSUES.text.x,
-      y: ISSUES.firstY,
-      w: ISSUES.text.w,
-      h: ISSUES.text.h,
-      sz: ISSUES.text.sz,
+      x: box.text.x,
+      y: box.firstY,
+      w: box.text.w,
+      h: box.text.h,
+      sz: box.text.sz,
       color: C.MUTED,
     })
     return
   }
 
-  m.changes.slice(0, ISSUES.max).forEach((it, i) => {
-    const y = ISSUES.firstY + i * ISSUES.gap
-    rect(s, ISSUES.tick.x, y + ISSUES.tick.dy, ISSUES.tick.w, ISSUES.tick.h, C.AMBER)
+  m.changes.forEach((it, i) => {
+    const y = box.firstY + i * box.gap
+    rect(s, box.tick.x, y + box.tick.dy, box.tick.w, box.tick.h, C.AMBER)
     text(
       s,
       [
         { text: `${it.label}   `, options: { bold: true, color: C.NAVY } },
         { text: it.body, options: { color: C.INK } },
       ],
-      { x: ISSUES.text.x, y, w: ISSUES.text.w, h: ISSUES.text.h, sz: ISSUES.text.sz, color: C.INK },
+      { x: box.text.x, y, w: box.text.w, h: box.text.h, sz: box.text.sz, color: C.INK },
     )
   })
 }
 
-function renderPlans(s: Slide, m: WeeklyModel, nextLabel: string) {
-  sectionTitle(s, SECTION_POS.s4, `4. 차주(${nextLabel}) 계획`)
-  const p = PLANS.panel
+function renderPlans(
+  s: Slide,
+  m: WeeklyModel,
+  nextLabel: string,
+  pos: { x: number; y: number; w: number },
+  box: PlanBox,
+) {
+  sectionTitle(s, pos, `4. 차주(${nextLabel}) 계획`)
+  const p = box.panel
   round(s, p.x, p.y, p.w, p.h, C.PANEL)
 
   if (m.plans.length === 0) {
     text(s, '· 차주 마감인 업무 없음', {
-      x: PLANS.text.x - 0.14,
-      y: PLANS.firstY,
-      w: PLANS.text.w,
-      h: PLANS.text.h,
-      sz: PLANS.text.sz,
+      x: box.text.x - 0.14,
+      y: box.firstY,
+      w: box.text.w,
+      h: box.text.h,
+      sz: box.text.sz,
       color: C.MUTED,
     })
     return
   }
 
-  m.plans.slice(0, PLANS.max).forEach((t, i) => {
-    const y = PLANS.firstY + i * PLANS.gap
-    rect(s, PLANS.dot.x, y + PLANS.dot.dy, PLANS.dot.w, PLANS.dot.h, C.NAVY)
-    text(s, t, { x: PLANS.text.x, y, w: PLANS.text.w, h: PLANS.text.h, sz: PLANS.text.sz, color: C.INK })
+  m.plans.forEach((t, i) => {
+    const y = box.firstY + i * box.gap
+    rect(s, box.dot.x, y + box.dot.dy, box.dot.w, box.dot.h, C.NAVY)
+    text(s, t, { x: box.text.x, y, w: box.text.w, h: box.text.h, sz: box.text.sz, color: C.INK })
   })
+}
+
+/**
+ * 3·4장을 1장에 그립니다 (`base`·`compact`).
+ *
+ * `compact` 는 표가 조금 넘칠 때입니다 — 두 절을 아래로 밀고 줄 수를 줄여 표에
+ * 0.78인치를 넘깁니다. 넘긴 만큼 실제로 표가 더 그려지므로 자리를 바꾼 것이지
+ * 내용을 버린 것이 아니고, 3·4장에서 못 실은 줄은 각주가 셉니다.
+ */
+function renderSectionsInline(s: Slide, m: WeeklyModel, nextLabel: string) {
+  if (m.layout === 'compact') {
+    renderChanges(s, m, ISSUES_COMPACT.section, ISSUES_COMPACT)
+    renderPlans(s, m, nextLabel, PLANS_COMPACT.section, PLANS_COMPACT)
+    return
+  }
+  renderChanges(s, m, SECTION_POS.s3, ISSUES)
+  renderPlans(s, m, nextLabel, SECTION_POS.s4, PLANS)
+}
+
+/** 3·4장 전용 장 (`spill`) — 슬라이드를 가로로 다 쓰므로 1장에 있을 때보다 넉넉합니다 */
+function renderSectionSlide(s: Slide, m: WeeklyModel, nextLabel: string) {
+  text(s, '이슈 · 차주 계획', { ...ISSUES_PAGE.title, color: C.NAVY, bold: true })
+  renderChanges(s, m, ISSUES_PAGE.section, ISSUES_PAGE)
+  renderPlans(s, m, nextLabel, PLANS_PAGE.section, PLANS_PAGE)
 }
 
 /**
@@ -622,10 +693,31 @@ export function buildWeeklyPptx(m: WeeklyModel, nextLabel: string): PptxGenJS {
 
   renderHeader(s, m)
   renderSummary(s, m)
-  renderTable(s, m)
+  sectionTitle(s, SECTION_POS.s1, '1. 금주 진행 현황 (프로젝트 · 담당자)')
+  renderTable(s, m.pages[0] ?? [], TABLE)
   renderOps(s, m)
-  renderChanges(s, m)
-  renderPlans(s, m, nextLabel)
+
+  // 3·4장은 1장에 남거나(base·compact) 별도 장으로 내려갑니다(spill).
+  if (m.layout !== 'spill') renderSectionsInline(s, m, nextLabel)
+
+  // 표가 한 장에 안 들어가면 **자르지 않고 장을 잇습니다.** 이어지는 장은
+  // 머리말·요약 띠·오른쪽 단이 없어 표가 더 위에서 시작하고 더 내려갑니다.
+  m.pages.slice(1).forEach((page, i) => {
+    const cont = pptx.addSlide()
+    cont.background = { color: C.WHITE }
+    text(cont, `1. 금주 진행 현황 (계속 ${i + 2}/${m.pages.length})`, {
+      ...TABLE_CONT.title,
+      color: C.NAVY,
+      bold: true,
+    })
+    renderTable(cont, page, TABLE_CONT)
+  })
+
+  if (m.layout === 'spill') {
+    const sec = pptx.addSlide()
+    sec.background = { color: C.WHITE }
+    renderSectionSlide(sec, m, nextLabel)
+  }
 
   // 2장째 — 프로젝트 진행 레일. 이 장에는 꼬리말을 두지 않습니다.
   //
