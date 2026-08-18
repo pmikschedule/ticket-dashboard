@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { buildWeeklyReport } from './build'
 import {
-  FOOT,
+  BODY_BOTTOM,
   ISSUES,
   ISSUES_COMPACT,
   ISSUES_PAGE,
@@ -235,12 +235,13 @@ describe('배치 좌표', () => {
     for (const box of [ISSUES_COMPACT, PLANS_COMPACT]) {
       expect(sectionBottom(box.section)).toBeLessThanOrEqual(box.panel.y)
       expect(listBottom(box, box.max)).toBeLessThanOrEqual(box.panel.y + box.panel.h)
-      expect(box.panel.y + box.panel.h).toBeLessThanOrEqual(FOOT.left.y)
+      expect(box.panel.y + box.panel.h).toBeLessThanOrEqual(BODY_BOTTOM)
     }
   })
 
-  it('내려보낸 배치 — 표가 꼬리말을 침범하지 않습니다', () => {
-    expect(TABLE_FIT.fullBottom).toBeLessThanOrEqual(FOOT.left.y)
+  it('내려보낸 배치 — 표가 슬라이드 아래 여백을 침범하지 않습니다', () => {
+    expect(TABLE_FIT.fullBottom).toBeLessThanOrEqual(BODY_BOTTOM)
+    expect(TABLE_CONT.bottom).toBeLessThanOrEqual(BODY_BOTTOM)
   })
 
   it('전용 장 — 두 절이 겹치지 않고 슬라이드 안에 들어갑니다', () => {
@@ -264,5 +265,48 @@ describe('배치 좌표', () => {
     expect(TABLE_CONT.top - TABLE_CONT.headY).toBeCloseTo(TABLE.top - TABLE.headY, 6)
     expect(TABLE_CONT.title.y + TABLE_CONT.title.h).toBeLessThanOrEqual(TABLE_CONT.headY)
     expect(TABLE_CONT.bottom).toBeLessThanOrEqual(SLIDE.h)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 표 칸 — 행 안에 들어가는가, 서로 겹치지 않는가
+// ---------------------------------------------------------------------------
+
+describe('표 칸 좌표', () => {
+  it('업무 행의 요소가 행 높이를 넘지 않습니다 (마지막 행 마감선이 깨지던 원인)', () => {
+    const c = TABLE.cols
+    expect(c.progress.dy + c.progress.h).toBeLessThanOrEqual(TABLE.rowH)
+    expect(c.bar.dy + c.bar.h).toBeLessThanOrEqual(TABLE.rowH)
+    expect((TABLE.rowH - c.status.h) / 2 + c.status.h).toBeLessThanOrEqual(TABLE.rowH)
+  })
+
+  it('묶음 머리행의 요소도 머리행 높이를 넘지 않습니다', () => {
+    const g = TABLE.group
+    expect(g.accent.dy + g.accent.h).toBeLessThanOrEqual(TABLE.groupH)
+    expect(g.progress.dy + g.progress.h).toBeLessThanOrEqual(TABLE.groupH)
+    expect(g.bar.dy + g.bar.h).toBeLessThanOrEqual(TABLE.groupH)
+  })
+
+  it('왼쪽 네 칸이 겹치지 않고 상태 칩 앞에서 끝납니다', () => {
+    const c = TABLE.cols
+    expect(c.title.x + c.title.w).toBeLessThanOrEqual(c.owner.x)
+    expect(c.owner.x + c.owner.w).toBeLessThanOrEqual(c.detail.x)
+    expect(c.detail.x + c.detail.w).toBeLessThanOrEqual(c.status.x)
+    expect(TABLE.group.title.x + TABLE.group.title.w).toBeLessThanOrEqual(TABLE.group.counts.x)
+    expect(TABLE.group.counts.x + TABLE.group.counts.w).toBeLessThanOrEqual(c.status.x)
+  })
+
+  it('머리글 칸이 본문 칸과 같은 순서로 늘어섭니다', () => {
+    const heads = TABLE.headCells
+    for (let i = 1; i < heads.length; i += 1) {
+      expect(heads[i - 1]!.x + heads[i - 1]!.w).toBeLessThanOrEqual(heads[i]!.x)
+    }
+    expect(heads.at(-1)!.x + heads.at(-1)!.w).toBeLessThanOrEqual(TABLE.x + TABLE.w)
+  })
+
+  it('진행사항 칸은 여덟 글자 폭입니다 (7.3pt 한글 한 글자 ≒ 0.101인치)', () => {
+    const head = TABLE.headCells.find((h) => h.label === '진행사항')
+    expect(head).toBeDefined()
+    expect(TABLE.cols.detail.w).toBeLessThanOrEqual(8 * 0.101 + 0.1)
   })
 })

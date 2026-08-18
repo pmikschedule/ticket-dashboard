@@ -11,7 +11,6 @@
 import PptxGenJS from 'pptxgenjs'
 import {
   C,
-  FOOT,
   HEAD,
   ISSUES,
   ISSUES_COMPACT,
@@ -527,23 +526,6 @@ function renderSectionSlide(s: Slide, m: WeeklyModel, nextLabel: string) {
 }
 
 /**
- * 꼬리말은 **왼쪽만** 씁니다.
- *
- * 오른쪽 팀명은 뺐습니다 — 부제가 이미 팀 이름이라 중복이고, 예전 값이
- * 잘못 박혀 있었습니다. 왼쪽 각주는 남깁니다: 지면 때문에 잘라낸 행, 비교
- * 대상이 없다는 사실, 파생값이라는 표시가 여기 들어갑니다. 지우면 보고서가
- * 실제보다 완전해 보입니다.
- */
-function renderFooter(s: Slide, m: WeeklyModel) {
-  const notes = m.footnotes.length > 0 ? ` · ${m.footnotes.join(' · ')}` : ''
-  text(s, `※ 데이터 출처: desk (${m.reportedOn} 스냅샷)${notes}`, {
-    ...FOOT.left,
-    color: C.MUTED,
-    valign: 'top',
-  })
-}
-
-/**
  * 2장째 슬라이드 — 프로젝트 진행 레일.
  *
  * desk `Weekly Report` 의 `1 프로젝트 진행 · 마일스톤` 을 옮긴 것입니다.
@@ -719,18 +701,10 @@ export function buildWeeklyPptx(m: WeeklyModel, nextLabel: string): PptxGenJS {
     renderSectionSlide(sec, m, nextLabel)
   }
 
-  // 2장째 — 프로젝트 진행 레일. 이 장에는 꼬리말을 두지 않습니다.
-  //
-  // 대신 **접거나 자르거나 파생한 사실은 1장 각주로 올립니다.** 2장에서 지운
-  // 것은 자리이지 사실이 아닙니다 — 마일스톤 날짜가 desk 가 준 값이 아니라
-  // 우리가 계산한 값이라는 표시는 어딘가에 남아야 합니다.
+  // 2장째 — 프로젝트 진행 레일.
   const rail = pptx.addSlide()
   rail.background = { color: C.WHITE }
   renderRailSlide(rail, m)
-
-  // 1장 꼬리말은 **맨 마지막**입니다. 2장에서 접거나 파생한 사실이 각주에
-  // 얹힌 뒤라야 그 내용까지 실립니다. 순서를 되돌리면 조용히 빠집니다.
-  renderFooter(s, m)
 
   return pptx
 }
