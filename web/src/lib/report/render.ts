@@ -141,20 +141,31 @@ function renderTable(s: Slide, page: WeeklyGroup[], geom: { headY: number; top: 
       renderRow(s, row, y, i % 2 === 1, g.standalone)
       y += TABLE.rowH
 
-      const next = g.rows[i + 1]
-      const boundary = next !== undefined && next.chip !== row.chip
-      hline(
-        s,
-        TABLE.x,
-        y,
-        TABLE.w,
-        boundary ? TABLE.groupRule.color : C.RULE,
-        boundary ? TABLE.groupRule.pt : 0.75,
-      )
+      const rule = rowSeparator(g.rows, i)
+      if (rule) hline(s, TABLE.x, y, TABLE.w, rule.color, rule.pt)
     })
   }
 
   hline(s, TABLE.x, y, TABLE.w, C.NAVY, 1.25)
+}
+
+/**
+ * 행 사이 구분선.
+ *
+ * **마지막 행 뒤에는 긋지 않습니다.** 그 자리에는 다음 묶음의 머리행(배경색이
+ * 바뀌므로 경계가 저절로 생깁니다)이나 표를 닫는 남색 선이 옵니다. 같이 그으면
+ * 같은 좌표에 선이 두 겹으로 얹혀 — 마지막 행에서는 0.75pt 회색선과 1.25pt
+ * 남색선이 겹쳐 — 선이 깨져 보입니다.
+ *
+ * 상태가 바뀌는 자리만 진하게 긋는 규칙은 그대로입니다.
+ */
+export function rowSeparator(rows: WeeklyRow[], i: number): { color: string; pt: number } | null {
+  const row = rows[i]
+  const next = rows[i + 1]
+  if (!row || !next) return null
+  return next.chip !== row.chip
+    ? { color: TABLE.groupRule.color, pt: TABLE.groupRule.pt }
+    : { color: C.RULE, pt: 0.75 }
 }
 
 /** 프로젝트 머리행 — 이름 · 금주 변화 · 마일스톤 진척율 */
@@ -221,13 +232,14 @@ function renderGroupHeader(s: Slide, g: WeeklyGroup, y: number) {
 /** 프로젝트 없는 업무 앞의 구분선. 묶음이 아니라 **끊는 줄**입니다 */
 function renderStandaloneRule(s: Slide, y: number) {
   const r = STANDALONE_RULE
-  hline(s, TABLE.x, y + r.h / 2, TABLE.w, TABLE.groupRule.color, 1)
+  // 줄이 먼저, 이름은 그 아래. 같은 높이에 놓으면 글자에 취소선이 그어집니다
+  hline(s, TABLE.x, y + r.rule.dy, TABLE.w, TABLE.groupRule.color, 1)
   rect(s, r.tick.x, y + r.tick.dy, r.tick.w, r.tick.h, C.MUTED)
   text(s, '프로젝트 미지정 — 개별 업무', {
     x: r.label.x,
-    y,
+    y: y + r.label.dy,
     w: r.label.w,
-    h: r.h,
+    h: r.label.h,
     sz: r.label.sz,
     color: C.MUTED,
   })

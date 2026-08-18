@@ -17,6 +17,7 @@ import {
   TABLE_FIT,
 } from './layout'
 import type { DeskState, DeskWork } from './types'
+import { rowSeparator } from './render'
 import { fitTable, paginateGroups, tableHeight, type WeeklyGroup, type WeeklyRow } from './weekly'
 
 function row(i: number): WeeklyRow {
@@ -304,9 +305,40 @@ describe('표 칸 좌표', () => {
     expect(heads.at(-1)!.x + heads.at(-1)!.w).toBeLessThanOrEqual(TABLE.x + TABLE.w)
   })
 
+  it('구분선이 이름 글자를 가로지르지 않습니다 (취소선처럼 보이던 문제)', () => {
+    const r = STANDALONE_RULE
+    // 줄은 칸 맨 위, 이름은 그 아래에서 시작합니다
+    expect(r.rule.dy).toBeLessThan(r.label.dy)
+    expect(r.label.dy + r.label.h).toBeLessThanOrEqual(r.h)
+    expect(r.tick.dy + r.tick.h).toBeLessThanOrEqual(r.h)
+  })
+
+  it('진척율 글자와 막대가 서로 겹치지 않고 행 아래로도 여유가 있습니다', () => {
+    const c = TABLE.cols
+    expect(c.progress.dy + c.progress.h).toBeLessThanOrEqual(c.bar.dy)
+    expect(TABLE.rowH - (c.bar.dy + c.bar.h)).toBeGreaterThanOrEqual(0.03)
+    const g = TABLE.group
+    expect(g.progress.dy + g.progress.h).toBeLessThanOrEqual(g.bar.dy)
+    expect(TABLE.groupH - (g.bar.dy + g.bar.h)).toBeGreaterThanOrEqual(0.02)
+  })
+
   it('진행사항 칸은 여덟 글자 폭입니다 (7.3pt 한글 한 글자 ≒ 0.101인치)', () => {
     const head = TABLE.headCells.find((h) => h.label === '진행사항')
     expect(head).toBeDefined()
     expect(TABLE.cols.detail.w).toBeLessThanOrEqual(8 * 0.101 + 0.1)
+  })
+})
+
+describe('행 구분선', () => {
+  const rows = [row(0), { ...row(1), chip: 'done' as const }, { ...row(2), chip: 'done' as const }]
+
+  it('마지막 행 뒤에는 긋지 않습니다 (표 마감선과 두 겹이 됩니다)', () => {
+    expect(rowSeparator(rows, rows.length - 1)).toBeNull()
+    expect(rowSeparator([row(0)], 0)).toBeNull()
+  })
+
+  it('상태가 바뀌는 자리는 진하게, 나머지는 연하게', () => {
+    expect(rowSeparator(rows, 0)?.pt).toBe(TABLE.groupRule.pt)
+    expect(rowSeparator(rows, 1)?.pt).toBe(0.75)
   })
 })
