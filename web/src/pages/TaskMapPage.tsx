@@ -10,7 +10,14 @@ import {
 } from '../hooks/queries'
 import { buildWeeklyReport } from '../lib/report/build'
 import { downloadWeekly } from '../lib/report/render'
-import { rangeLabel, todayIso, weekForSnapshot } from '../lib/report/week'
+import {
+  nextWeek,
+  parseWeekLabel,
+  previousWeek,
+  rangeLabel,
+  todayIso,
+  weekForSnapshot,
+} from '../lib/report/week'
 import { REPORT_SUBTITLE } from '../lib/constants'
 import {
   addEntry,
@@ -77,7 +84,13 @@ export default function TaskMapPage() {
   // 구간과 어긋나면 **화면이 그 사실을 말합니다** — 조용히 지난 주를 내놓으면
   // 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다.
   const weeks = snapshot.data ? weekForSnapshot(snapshot.data.day, todayIso()) : null
-  const week = weeks?.buildable ?? null
+  // 골라 둔 구간. null 이면 기본값(오늘이 속한 구간)입니다 — 대개 그대로 씁니다
+  const [weekPick, setWeekPick] = useState<string | null>(null)
+  const week = weeks ? (weekPick ? (parseWeekLabel(weekPick) ?? weeks.buildable) : weeks.buildable) : null
+  // 앞으로는 오늘이 속한 구간까지만. 그 너머는 아직 아무 일도 안 일어난 주라
+  // 빈 보고서가 나오고, 빈 보고서는 잘못 고른 것보다 알아채기 어렵습니다.
+  const canForward = Boolean(weeks && week && week.id < weeks.target.id)
+  const weekShifted = Boolean(weekPick) && week?.id !== weeks?.buildable.id
   const base = useSnapshotBefore(week?.from ?? null)
   // 2장 운영 현황의 원천. 못 읽어도 보고서는 나와야 하므로 빈 배열로 넘깁니다
   const tickets = useReportTickets()
@@ -127,6 +140,7 @@ export default function TaskMapPage() {
         baseDay: base.data?.day ?? null,
         entries,
         tickets: tickets.data ?? [],
+        weekId: week.id,
         subtitle: REPORT_SUBTITLE,
       })
       await downloadWeekly(out.model, out.nextLabel, out.fileName)
@@ -182,19 +196,45 @@ export default function TaskMapPage() {
         </span>
         <div className="flex-1" />
         {week && (
-          <button
-            type="button"
-            disabled={building || base.isLoading || tickets.isLoading}
-            onClick={() => void onBuild()}
-            className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40 ${
-              weeks?.fresh
-                ? 'border-slate-300 hover:bg-slate-50'
-                : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
-            }`}
-            title={`${rangeLabel(week)} 구간으로 만듭니다`}
-          >
-            {building ? '만드는 중…' : `주간보고서 생성 — ${rangeLabel(week)}`}
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setWeekPick(previousWeek(week).id)}
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm hover:bg-slate-50"
+              title="한 주 앞 구간"
+            >
+              ‹
+            </button>
+            <span
+              className={`min-w-[9.5rem] rounded-lg px-2 py-1.5 text-center text-sm tabular-nums ${
+                weekShifted ? 'bg-slate-100 text-slate-700' : 'text-slate-600'
+              }`}
+            >
+              {rangeLabel(week)}
+            </span>
+            <button
+              type="button"
+              disabled={!canForward}
+              onClick={() => setWeekPick(nextWeek(week).id)}
+              className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-30"
+              title={canForward ? '한 주 뒤 구간' : '오늘이 속한 구간까지만 만듭니다'}
+            >
+              ›
+            </button>
+            <button
+              type="button"
+              disabled={building || base.isLoading || tickets.isLoading}
+              onClick={() => void onBuild()}
+              className={`ml-1 rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40 ${
+                weeks?.fresh
+                  ? 'border-slate-300 hover:bg-slate-50'
+                  : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+              }`}
+              title={`${rangeLabel(week)} 구간으로 만듭니다`}
+            >
+              {building ? '만드는 중…' : '주간보고서 생성'}
+            </button>
+          </div>
         )}
         {dirty && (
           <button

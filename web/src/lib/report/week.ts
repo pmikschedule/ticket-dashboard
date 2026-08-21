@@ -107,6 +107,15 @@ export function rangeLabel(w: Week): string {
 /**
  * **어느 구간을 만들 수 있는가** — 오늘과 스냅샷 날짜를 나란히 놓습니다.
  *
+ * 기준은 **오늘이 속한 구간**입니다 (`weekOf`). 오늘이 8/21(금)이면 8/18(화) ~
+ * 8/24(월) 이고, 그 구간은 아직 안 닫혔습니다. 한때 '방금 끝난 구간'
+ * (`currentWeek`)을 기준으로 삼았는데, 금요일에 만든 보고서가 지지난주 내용이라
+ * 이번 주에 난 장애가 안 실렸습니다. 보고는 지금 하는 일을 담아야 합니다.
+ *
+ * 안 닫힌 구간을 만든다는 것은 **마감 전 중간 집계**라는 뜻입니다. 같은 구간을
+ * 다음 주에 다시 만들면 숫자가 달라지므로, 그 사실을 `buildWeeklyReport` 가
+ * 각주에 적습니다 — 안 적으면 확정된 수치로 읽힙니다.
+ *
  * 주간 보고서는 desk 스냅샷 하나로 만듭니다. 그런데 수집은 특정 PC 의 Chrome
  * 쿠키에 묶여 있어 **며칠씩 밀릴 수 있습니다.** 밀린 스냅샷으로 만들면 화면은
  * 아무 말 없이 지난 구간의 보고서를 내놓습니다 — 서식도 건수도 멀쩡해 보이는데
@@ -142,16 +151,13 @@ export interface WeekTarget {
 }
 
 export function weekForSnapshot(snapshotDay: string, today: string): WeekTarget {
-  const target = currentWeek(today)
-  const buildable = currentWeek(snapshotDay)
+  const target = weekOf(today)
+  const day = snapshotDay.slice(0, 10)
+  // 스냅샷이 구간 시작 전이면 그 구간을 못 만듭니다 — 스냅샷이 속한 구간까지가 한계입니다
+  const fresh = day >= target.from
+  const buildable = fresh ? target : weekOf(day)
   const behind = Math.round((toUtc(target.to) - toUtc(buildable.to)) / (7 * DAY))
-  return {
-    target,
-    buildable,
-    // 마감일 당일 스냅샷도 그 구간을 덮습니다 — 월요일 저녁 스캔이 정상 운영입니다
-    fresh: snapshotDay.slice(0, 10) >= target.to,
-    behindWeeks: Math.max(0, behind),
-  }
+  return { target, buildable, fresh, behindWeeks: Math.max(0, behind) }
 }
 
 /** 그 날짜가 이 구간에 속하는지. 문자열 비교라 타임존에 안 흔들립니다 */

@@ -188,7 +188,7 @@ function state(count: number): DeskState {
   }
 }
 
-describe('buildWeeklyReport — 진행 현황은 목록에 있는 것을 다 싣습니다', () => {
+describe('buildWeeklyReport — 한 장을 넘기지 않습니다', () => {
   const base = {
     day: '2026-08-13',
     base: null,
@@ -199,17 +199,24 @@ describe('buildWeeklyReport — 진행 현황은 목록에 있는 것을 다 싣
     subtitle: 'SW Development Team',
   }
 
-  it('예전 같으면 잘렸을 건수도 각주에 "N건 중 M건" 이 안 붙습니다', () => {
-    const out = buildWeeklyReport({ ...base, state: state(20) })
+  it('들어가는 만큼은 그대로 싣습니다', () => {
+    const out = buildWeeklyReport({ ...base, state: state(8) })
     const shown = out.model.pages.reduce((n, p) => n + p.reduce((k, g) => k + g.rows.length, 0), 0)
-    expect(shown).toBe(20)
-    expect(out.model.footnotes.some((f) => /업무 \d+건 중/.test(f))).toBe(false)
+    expect(out.model.pages).toHaveLength(1)
+    expect(shown).toBe(8)
   })
 
-  it('장이 늘어나면 몇 장에 나눠 실었는지 밝힙니다', () => {
+  it('넘쳐도 장을 늘리지 않습니다 — 이슈·차주 계획이 같은 장에 있어야 합니다', () => {
     const out = buildWeeklyReport({ ...base, state: state(40) })
-    expect(out.model.pages.length).toBeGreaterThan(1)
-    expect(out.model.footnotes.some((f) => f.includes('나눠 실었습니다'))).toBe(true)
+    expect(out.model.pages).toHaveLength(1)
+    expect(out.model.layout).toBe('base')
+  })
+
+  it('자른 행은 각주에 적습니다 — 조용히 자르면 40건짜리 주가 9건짜리로 보입니다', () => {
+    const out = buildWeeklyReport({ ...base, state: state(40) })
+    const shown = out.model.pages.reduce((n, p) => n + p.reduce((k, g) => k + g.rows.length, 0), 0)
+    expect(shown).toBeLessThan(40)
+    expect(out.model.footnotes.some((f) => /업무 \d+건 중 \d+건 표기/.test(f))).toBe(true)
   })
 })
 
