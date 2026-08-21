@@ -1,15 +1,18 @@
 #!/usr/bin/env -S npx tsx
 /**
- * CLI — `doctor` · `scan` · `push` · `monthly` · `list` · `ui`.
+ * CLI — `doctor` · `scan` · `push` · `monthly` · `list`.
  *
  * **주간 보고서는 여기 없습니다.** 이슈트래커의 태스크맵 화면에서 만듭니다
  * (`web/src/lib/report/`). 집계 규칙을 두 벌 두지 않기 위해서입니다.
  *
+ * **태스크 맵도 여기서 안 고칩니다.** 원본은 대시보드의 `task_map` 이고 이 도구는
+ * 읽기만 합니다 (`dashboard.fetchTaskMap`). 편집이 양쪽에 있으면 한쪽이 다른 쪽을
+ * 소리 없이 덮어씁니다 — 실제로 그럴 뻔했습니다.
+ *
  *   scan             desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
- *   push             밀린 스냅샷·태스크 맵을 대시보드에 올립니다 (scan 없이)
+ *   push             밀린 스냅샷을 대시보드에 올립니다 (scan 없이)
  *   monthly [YYYY-MM] 그 달의 보고서 pptx 를 만듭니다 (기본: 지난달)
  *   list             업무 전수 목록 xlsx 를 만듭니다 (프로젝트별 · 담당자별)
- *   ui               태스크 맵 편집 화면 (localhost)
  *   doctor           설정·연결·쿠키 만료를 점검합니다
  */
 
@@ -18,6 +21,7 @@ import { join } from 'node:path'
 import { loadConfig } from './config.ts'
 import { daysLeft, resolveCookie } from './cookie.ts'
 import {
+  daysBetween,
   fetchState,
   latestSnapshot,
   listSnapshots,
@@ -25,23 +29,29 @@ import {
   previousDueDates,
   readSnapshot,
   saveSnapshot,
+  todayIso,
 } from './desk.ts'
-import { fetchTickets, signIn } from './dashboard.ts'
+import { fetchTaskMap, fetchTickets, signIn } from './dashboard.ts'
 import { buildReport, countByWorkType } from './aggregate.ts'
 import { TABLE } from './layout.ts'
 import { writeReport } from './render.ts'
 import { buildWorkList, summarizeByOwner } from './worklist.ts'
-import { applyTaskMap, loadTaskMap, mapFootnotes } from './taskmap.ts'
-import { startUi } from './ui.ts'
-import { uploadSnapshot, uploadTaskMap, uploadedDays } from './upload.ts'
+import { applyTaskMap, mapFootnotes, type TaskMap } from './taskmap.ts'
+import { uploadSnapshot, uploadedDays } from './upload.ts'
 import { writeWorkList } from './xlsx.ts'
 import type { TicketRow } from './types.ts'
+import type { SupabaseClient } from '@supabase/supabase-js'
 
 const cfg = loadConfig()
 const host = new URL(cfg.deskUrl).host
 
 function say(s = '') {
   process.stdout.write(`${s}\n`)
+}
+
+/** 맵을 마지막으로 저장한 날. 값이 없으면 `?` 로 둡니다 — 지어내지 않습니다 */
+function mapStamp(map: TaskMap): string {
+  return map.updatedAt ? map.updatedAt.slice(0, 10) : '?'
 }
 
 function fail(e: unknown): never {
@@ -70,8 +80,7 @@ function cookieOrDie() {
  * **세 산출물이 전부 이걸 거칩니다.** 주간만 적용하면 같은 주의 주간·월간·목록이
  * 서로 다른 항목 구성을 보여 주게 됩니다 — 어느 쪽이 맞는지 아무도 모릅니다.
  */
-function mapped(state: import('./types.ts').DeskState) {
-  const map = loadTaskMap(cfg.taskmapPath)
+function mapped(state: import('./types.ts').DeskState, map: TaskMap) {
   const r = applyTaskMap(state, map)
   return { ...r, entries: map.entries.length }
 }
@@ -127,10 +136,9 @@ async function pushAll(opt: { quiet?: boolean } = {}) {
       kb += r.sizeKb
     }
 
-    const entries = await uploadTaskMap(client, loadTaskMap(cfg.taskmapPath))
-
-    if (missing.length > 0) say(`  업로드 : 스냅샷 ${missing.length}개 (${kb}KB) · 태스크 맵 항목 ${entries}개`)
-    else say(`  업로드 : 새 스냅샷 없음 · 태스크 맵 항목 ${entries}개`)
+    // 태스크 맵은 **올리지 않습니다.** 대시보드가 원본이고 여기는 읽기만 합니다
+    if (missing.length > 0) say(`  업로드 : 스냅샷 ${missing.length}개 (${kb}KB)`)
+    else say('  업로드 : 새 스냅샷 없음')
   } catch (e) {
     // 스캔에 딸려 돌 때는 여기서 멈추지 않습니다 — 스냅샷은 이미 로컬에 남았습니다
     const msg = e instanceof Error ? e.message : String(e)
@@ -145,25 +153,53 @@ async function cmdPush() {
   await pushAll()
 }
 
-/**
- * 티켓(장애·유지보수·신규개발). 대시보드 설정이 없으면 **빈 배열로 진행하고
- * 그 사실을 알립니다.** 여기서 멈추면 desk 쪽만이라도 보고 싶은 사람이
- * 아무것도 못 받습니다.
- */
-async function loadTickets(): Promise<{ list: TicketRow[]; warning: string | null }> {
-  if (!cfg.supabaseUrl || !cfg.supabaseEmail) {
-    return {
-      list: [],
-      warning: '대시보드 설정이 없어 운영 집계를 건너뜁니다 (.env 의 SUPABASE_* 확인)',
-    }
-  }
-  const client = await signIn({
+/** 대시보드 접속. 설정이 없으면 null — 무엇을 포기할지는 부르는 쪽이 정합니다 */
+async function connect(): Promise<SupabaseClient | null> {
+  if (!cfg.supabaseUrl || !cfg.supabaseEmail) return null
+  return signIn({
     url: cfg.supabaseUrl,
     anonKey: cfg.supabaseAnonKey,
     email: cfg.supabaseEmail,
     password: cfg.supabasePassword,
   })
+}
+
+/**
+ * 티켓(장애·유지보수·신규개발). 대시보드 설정이 없으면 **빈 배열로 진행하고
+ * 그 사실을 알립니다.** 여기서 멈추면 desk 쪽만이라도 보고 싶은 사람이
+ * 아무것도 못 받습니다.
+ */
+async function loadTickets(
+  client: SupabaseClient | null,
+): Promise<{ list: TicketRow[]; warning: string | null }> {
+  if (!client) {
+    return {
+      list: [],
+      warning: '대시보드 설정이 없어 운영 집계를 건너뜁니다 (.env 의 SUPABASE_* 확인)',
+    }
+  }
   return { list: await fetchTickets(client), warning: null }
+}
+
+/**
+ * 태스크 맵 — 못 읽으면 **멈춥니다.**
+ *
+ * 티켓과 다릅니다. 티켓이 없으면 운영 현황 한 절이 비고 그 사실이 각주에 남지만,
+ * 맵이 없으면 **본문의 모양 자체가 달라집니다** — 묶어 둔 항목이 원본 태스크
+ * 여러 줄로 도로 흩어지고, 보고서는 멀쩡해 보입니다. 지난주와 이번 주의 행
+ * 구성이 다른데 아무도 이유를 모르게 되므로, 조용히 빈 맵으로 진행하지 않습니다.
+ *
+ * 항목이 **0개인 것**은 사실이므로 그대로 진행합니다. '못 읽었다' 와 '없다' 는
+ * 다른 상태입니다.
+ */
+async function requireTaskMap(client: SupabaseClient | null): Promise<TaskMap> {
+  if (!client) {
+    throw new Error(
+      '태스크 맵을 읽을 수 없습니다 — 대시보드 설정이 필요합니다 (.env 의 SUPABASE_*).\n' +
+        '  맵의 원본은 대시보드입니다. 편집은 이슈트래커 › 태스크맵 화면에서 합니다.',
+    )
+  }
+  return fetchTaskMap(client)
 }
 
 async function cmdMonthly(argMonth?: string) {
@@ -182,7 +218,9 @@ async function cmdMonthly(argMonth?: string) {
   }
   say(`  스냅샷 : ${snap.meta.scannedAt.slice(0, 10)} (work ${snap.meta.counts.work})`)
 
-  const { list: tickets, warning } = await loadTickets()
+  const client = await connect()
+  const map = await requireTaskMap(client)
+  const { list: tickets, warning } = await loadTickets(client)
   if (warning) say(`  ⚠ ${warning}`)
   else {
     const c = countByWorkType(tickets)
@@ -191,8 +229,12 @@ async function cmdMonthly(argMonth?: string) {
     )
   }
 
-  const m2 = mapped(snap.state)
-  if (m2.entries > 0) say(`  태스크맵: 항목 ${m2.entries}개 적용 · 항목 미지정 ${m2.issues.unmapped}건`)
+  const m2 = mapped(snap.state, map)
+  say(
+    m2.entries > 0
+      ? `  태스크맵: 항목 ${m2.entries}개 적용 · 항목 미지정 ${m2.issues.unmapped}건 (대시보드 ${mapStamp(map)} 저장)`
+      : '  태스크맵: 항목 없음 — 원본 그대로 1건=1행',
+  )
 
   const model = buildReport(m2.state, tickets, {
     year,
@@ -235,7 +277,10 @@ async function cmdMonthly(argMonth?: string) {
  *
  * 보고서와 달리 **달로 거르지 않고 자르지도 않습니다.** 스냅샷에 있는 업무가
  * 전부 들어갑니다 — pptx 한 장에 안 들어가서 접힌 것들을 확인하는 자리입니다.
- * 대시보드(티켓)는 안 봅니다. 이건 desk 업무 목록입니다.
+ * 티켓은 안 봅니다. 이건 desk 업무 목록입니다.
+ *
+ * 다만 **태스크 맵은 봅니다.** 보고서에서 접힌 건을 확인하는 자리인데 항목 구성이
+ * 보고서와 다르면 대조가 안 됩니다.
  */
 async function cmdList() {
   const snap = latestSnapshot(cfg.snapshotDir)
@@ -245,7 +290,8 @@ async function cmdList() {
   const asOf = snap.meta.scannedAt.slice(0, 10)
   say(`업무 목록 — 기준일 ${asOf}`)
 
-  const m3 = mapped(snap.state)
+  const map = await requireTaskMap(await connect())
+  const m3 = mapped(snap.state, map)
   const groups = buildWorkList(m3.state, asOf)
   const owners = summarizeByOwner(groups)
 
@@ -269,17 +315,6 @@ function defaultMonth(now: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
-/** 태스크 맵 편집 화면. 브라우저를 자동으로 엽니다 */
-async function cmdUi() {
-  startUi(cfg, (url) => {
-    say(`태스크 맵 UI — ${url}`)
-    say(`  맵     : ${cfg.taskmapPath}`)
-    say('  멈추려면 Ctrl+C')
-    // 열어 주지 않으면 주소를 복사해 붙이게 됩니다
-    import('node:child_process').then(({ spawn }) => spawn('open', [url], { stdio: 'ignore' }))
-  })
-}
-
 async function cmdDoctor() {
   say('설정 점검')
   say(`  desk   : ${cfg.deskUrl}`)
@@ -297,8 +332,9 @@ async function cmdDoctor() {
   }
 
   try {
-    const { list, warning } = await loadTickets()
-    if (warning) {
+    const client = await connect()
+    const { list, warning } = await loadTickets(client)
+    if (warning || !client) {
       ok = false
       say(`  대시보드 : 미설정 — ${warning}`)
     } else {
@@ -306,6 +342,28 @@ async function cmdDoctor() {
       say(
         `  대시보드 : OK — 티켓 ${list.length}건 (장애 ${c.incident} · 유지보수 ${c.maintenance} · 신규개발 ${c.development})`,
       )
+
+      const map = await fetchTaskMap(client)
+      say(`  태스크맵 : 항목 ${map.entries.length}개 · ${mapStamp(map)} 저장 (원본은 대시보드)`)
+
+      // **스냅샷 나이가 곧 보고서가 밀린 정도입니다.** 주간 보고서는 대시보드에
+      // 올라간 최신 스냅샷의 날짜로 구간을 정하므로, 여기가 늙으면 화면은
+      // 멀쩡한 얼굴로 지난 구간을 만들어 냅니다.
+      const days = [...(await uploadedDays(client))].sort()
+      const newest = days[days.length - 1]
+      if (!newest) {
+        ok = false
+        say('  스냅샷   : 대시보드에 없음 — `npm run scan` 을 한 번 돌리세요')
+      } else {
+        const age = daysBetween(newest, todayIso())
+        say(`  스냅샷   : 대시보드 최신 ${newest} (${age}일 전) · ${days.length}개`)
+        if (age >= 7) {
+          ok = false
+          say(
+            `  ⚠ 스냅샷이 ${age}일 지났습니다. 주간 보고서가 지난 구간으로 만들어집니다 — \`npm run scan\` 을 돌리세요.`,
+          )
+        }
+      }
     }
   } catch (e) {
     ok = false
@@ -323,10 +381,9 @@ try {
   else if (cmd === 'monthly') await cmdMonthly(arg)
   else if (cmd === 'list') await cmdList()
   else if (cmd === 'push') await cmdPush()
-  else if (cmd === 'ui') await cmdUi()
   else if (cmd === 'doctor') await cmdDoctor()
   else {
-    say('사용법: reporter <scan|push|monthly [YYYY-MM]|list|ui|doctor>')
+    say('사용법: reporter <scan|push|monthly [YYYY-MM]|list|doctor>')
     process.exit(2)
   }
 } catch (e) {

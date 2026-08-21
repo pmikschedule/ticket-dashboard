@@ -54,13 +54,6 @@ export interface Config {
   team: string
   snapshotDir: string
   outDir: string
-  /**
-   * 태스크 맵. **`data/` 가 아니라 `config/` 입니다** — data 는 gitignore 라
-   * 잃으면 복구가 안 되는데, 이 파일은 사람이 분류한 결과라 다시 못 뽑습니다.
-   */
-  taskmapPath: string
-  /** 태스크 맵 UI 포트. 127.0.0.1 에만 바인딩합니다 */
-  uiPort: number
 }
 
 export function loadConfig(): Config {
@@ -77,7 +70,5 @@ export function loadConfig(): Config {
     team: env('REPORT_TEAM', 'Compliance Team'),
     snapshotDir: resolve(ROOT, env('SNAPSHOT_DIR', 'data/snapshots')),
     outDir: resolve(ROOT, env('OUT_DIR', 'out')),
-    taskmapPath: resolve(ROOT, env('TASKMAP', 'config/taskmap.json')),
-    uiPort: Number(env('UI_PORT', '4173')),
   }
 }

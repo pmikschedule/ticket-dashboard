@@ -15,6 +15,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { TASKMAP_VERSION, type TaskMap } from './taskmap.ts'
 import { WORK_TYPES, type TicketRow, type WorkType } from './types.ts'
 
 export interface DashboardAuth {
@@ -91,4 +92,36 @@ export async function fetchTickets(client: SupabaseClient): Promise<TicketRow[]>
     system: r.ticket_meta?.system_type ?? null,
     resolution: r.ticket_meta?.resolution ?? null,
   }))
+}
+
+/**
+ * 태스크 맵 — **대시보드가 원본입니다.**
+ *
+ * 편집은 이슈트래커의 태스크맵 화면이 맡습니다 (`web/src/pages/TaskMapPage.tsx`).
+ * 한때 이 도구가 로컬 `config/taskmap.json` 을 읽어 쓰고 스캔 때마다 대시보드로
+ * 덮어썼는데, 그러면 **양쪽에서 고칠 수 있는 상태**가 됩니다 — 실제로 화면에서
+ * 만든 항목 8개가 빈 로컬 파일에 지워지기 직전이었습니다.
+ *
+ * 그래서 방향을 하나로 뒤집었습니다. 여기는 읽기만 합니다. 주간(화면)과
+ * 월간·목록(이 도구)이 **같은 한 벌**을 보게 되고, 그래야 같은 주의 산출물이
+ * 서로 다른 항목 구성으로 나가지 않습니다.
+ */
+export async function fetchTaskMap(client: SupabaseClient): Promise<TaskMap> {
+  const { data, error } = await client
+    .from('task_map')
+    .select('version, entries, updated_at')
+    .eq('id', 1)
+    .single()
+
+  if (error) {
+    throw new Error(`태스크 맵 조회 실패: ${error.message}`)
+  }
+
+  const row = data as { version: number | null; entries: unknown[] | null; updated_at: string | null }
+  return {
+    version: row.version ?? TASKMAP_VERSION,
+    updatedAt: row.updated_at ?? '',
+    // 구성원이 없는 항목이 와도 죽지 않습니다 — 검증은 applyTaskMap 이 각주로 냅니다
+    entries: ((row.entries ?? []) as TaskMap['entries']).map((e) => ({ ...e, members: e.members ?? [] })),
+  }
 }

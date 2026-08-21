@@ -10,7 +10,7 @@ import {
 } from '../hooks/queries'
 import { buildWeeklyReport } from '../lib/report/build'
 import { downloadWeekly } from '../lib/report/render'
-import { currentWeek, rangeLabel } from '../lib/report/week'
+import { rangeLabel, todayIso, weekForSnapshot } from '../lib/report/week'
 import { REPORT_SUBTITLE } from '../lib/constants'
 import {
   addEntry,
@@ -72,9 +72,12 @@ export default function TaskMapPage() {
   )
   const errors = useMemo(() => validateTaskMap(entries), [entries])
 
-  // 보고 구간은 **방금 끝난 화~월**입니다. 기준일은 스냅샷 날짜 — 오늘 날짜를
-  // 쓰면 오래된 스냅샷으로 최신 주를 만들어 빈 보고서가 나옵니다.
-  const week = snapshot.data ? currentWeek(snapshot.data.day) : null
+  // 보고 구간은 **방금 끝난 화~월**입니다. 만드는 것은 스냅샷이 뒷받침하는
+  // 구간이고(오늘 날짜로 우기면 자료가 없어 빈 보고서가 나옵니다), 오늘 기준
+  // 구간과 어긋나면 **화면이 그 사실을 말합니다** — 조용히 지난 주를 내놓으면
+  // 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다.
+  const weeks = snapshot.data ? weekForSnapshot(snapshot.data.day, todayIso()) : null
+  const week = weeks?.buildable ?? null
   const base = useSnapshotBefore(week?.from ?? null)
   // 2장 운영 현황의 원천. 못 읽어도 보고서는 나와야 하므로 빈 배열로 넘깁니다
   const tickets = useReportTickets()
@@ -183,10 +186,14 @@ export default function TaskMapPage() {
             type="button"
             disabled={building || base.isLoading || tickets.isLoading}
             onClick={() => void onBuild()}
-            className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40"
+            className={`rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40 ${
+              weeks?.fresh
+                ? 'border-slate-300 hover:bg-slate-50'
+                : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+            }`}
             title={`${rangeLabel(week)} 구간으로 만듭니다`}
           >
-            {building ? '만드는 중…' : '주간보고서 생성'}
+            {building ? '만드는 중…' : `주간보고서 생성 — ${rangeLabel(week)}`}
           </button>
         )}
         {dirty && (
@@ -207,6 +214,19 @@ export default function TaskMapPage() {
           {save.isPending ? '저장 중…' : '저장'}
         </button>
       </header>
+
+      {weeks && !weeks.fresh && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800 ring-1 ring-amber-200">
+          <b>desk 스냅샷이 {formatDate(snapshot.data!.day)} 에 멈춰 있습니다.</b> 지금 만들면{' '}
+          <b>{rangeLabel(weeks.buildable)}</b> 구간이 나옵니다 — 오늘 기준 구간은{' '}
+          <b>{rangeLabel(weeks.target)}</b> 이고 {weeks.behindWeeks}주 밀렸습니다. 그 뒤에 등록되거나
+          끝난 일은 보고서에 없습니다.
+          <br />
+          수집 PC 에서 <code className="rounded bg-white px-1">cd reporter &amp;&amp; npm run scan</code>{' '}
+          을 돌린 뒤 이 화면을 새로고침하면 현재 작업 기준으로 만들어집니다. desk 인증이 그 PC 의
+          브라우저 쿠키라 수집이 거기를 벗어날 수 없습니다.
+        </div>
+      )}
 
       <p className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
         <b className="text-slate-800">항목 미지정</b> = 보고 항목을 아직 안 만든 태스크입니다.{' '}

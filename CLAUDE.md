@@ -107,6 +107,19 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
   화면에서는 전부 펼쳐 두고 한 번씩 누르게 합니다 (`ChipRow`).
 - **집계는 순수 함수를 거칩니다.** 웹은 `web/src/lib/stats.ts`·`taskmap.ts`,
   에이전트는 `summarize.py`. 화면·렌더링 코드에서 직접 계산하지 않습니다.
+- **태스크 맵의 원본은 대시보드 한 곳입니다.** 편집기는 이슈트래커의 태스크맵
+  화면 하나뿐이고, reporter 는 `dashboard.fetchTaskMap` 으로 **읽기만** 합니다.
+  한때 로컬 `config/taskmap.json` 을 스캔마다 올려 덮어썼는데, 편집이 화면으로
+  옮겨 간 뒤로 그 파일이 비어 있어서 **스캔 한 번이면 팀의 분류가 통째로
+  날아가는** 상태였습니다. 방향이 하나여야 하는 이유가 그것입니다.
+  못 읽으면 월간·목록은 **멈춥니다** — 맵이 없으면 항목이 원본 태스크 여러 줄로
+  흩어져 본문의 모양이 조용히 달라집니다. 항목 0개인 것은 사실이므로 진행합니다.
+- **주간 보고서의 구간은 최신 스냅샷 날짜가 정합니다.** 그래서 **스냅샷 나이가 곧
+  보고서가 밀린 정도**입니다. 밀린 채로 만들면 화면은 아무 말 없이 지난 구간을
+  내놓는데, 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다. 오늘 기준 구간과
+  어긋나면 화면이 배너로 밝히고(`weekForSnapshot`), `doctor` 는 7일이 넘으면
+  실패로 셉니다. 오늘 날짜로 우겨 만들지는 **않습니다** — 자료가 없어 빈 보고서가
+  나오고, 빈 보고서는 밀린 것보다 알아채기 어렵습니다.
 - **태스크 맵은 한 행(`task_map`)이고 낙관적 잠금으로 저장합니다.** 읽을 때 본
   `updated_at` 을 조건에 걸어, 그사이 남이 저장했으면 거절하고 다시 읽게 합니다.
   잠금이 없으면 두 사람이 같이 편집할 때 앞사람의 분류가 통째로 사라지는데
@@ -144,15 +157,15 @@ import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 �
 ## 명령
 
 ```bash
-cd web      && npm test && npm run build   # 순수 로직 115개 + 타입체크
+cd web      && npm test && npm run build   # 순수 로직 243개 + 타입체크
 cd agent    && pytest -q                   # 순수 로직·파이프라인 138개
 cd agent    && ticket-agent doctor         # 설정·연결 점검
-cd reporter && npm test                    # 집계·레이아웃 229개 + 타입체크
+cd reporter && npm test                    # 집계·레이아웃 173개 + 타입체크
+cd reporter && npm run doctor              # 설정·연결·쿠키 + 스냅샷 나이 점검
 cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
 cd reporter && npm run push                # 밀린 스냅샷만 올리기
 cd reporter && npm run monthly             # 지난달 보고서 pptx
 cd reporter && npm run list                # 업무 전수 목록 xlsx
-cd reporter && npm run ui                  # 태스크 맵 편집 화면
 ```
 
 ## 용어

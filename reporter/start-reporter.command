@@ -157,23 +157,22 @@ fi
 # ── 5. 메뉴 ──────────────────────────────────────────────────────────────────
 printf '\n%s무엇을 할까요?%s\n\n' "$BOLD" "$RESET"
 printf '  %s1%s  스냅샷 수집        %s주 1회 이상. 이걸 놓치면 그날은 복원되지 않습니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s2%s  주간 업무 보고     %s이번 주 pptx. 지난주 스냅샷과 대조합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s3%s  지난달 보고서      %sout/ 에 pptx 를 만듭니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s4%s  특정 달 보고서     %s월을 직접 입력합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s5%s  업무 목록          %s프로젝트별·담당자별 전수 목록 xlsx. 자르지 않습니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s6%s  태스크 맵 편집     %s브라우저로 항목을 묶고 프로젝트를 붙입니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s7%s  점검               %s설정·연결·쿠키 만료를 봅니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s2%s  지난달 보고서      %sout/ 에 pptx 를 만듭니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s3%s  특정 달 보고서     %s월을 직접 입력합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s4%s  업무 목록          %s프로젝트별·담당자별 전수 목록 xlsx. 자르지 않습니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s5%s  점검               %s설정·연결·쿠키·스냅샷 나이를 봅니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '\n%s  주간 보고서와 태스크 맵 편집은 이슈트래커의 [태스크맵] 화면에 있습니다.%s\n' "$DIM" "$RESET"
+printf '%s  여기서 1번을 돌려야 그 화면이 오늘 자료를 봅니다.%s\n' "$DIM" "$RESET"
 printf '\n'
-printf '선택 [1-7, 그냥 Enter 는 1]: '
+printf '선택 [1-5, 그냥 Enter 는 1]: '
 read -r CHOICE
 CHOICE="${CHOICE:-1}"
 
 MONTH=''
 case "$CHOICE" in
   1) ARGS=(scan) ;;
-  2) ARGS=(weekly) ;;
-  3) ARGS=(monthly) ;;
-  4)
+  2) ARGS=(monthly) ;;
+  3)
     printf '어느 달입니까? (예: 2026-07): '
     read -r MONTH
     # 형식을 여기서 막습니다. CLI 까지 흘려보내면 쿠키·로그인을 다 거친 뒤에 깨집니다.
@@ -182,17 +181,19 @@ case "$CHOICE" in
     fi
     ARGS=(monthly "$MONTH")
     ;;
-  5) ARGS=(list) ;;
-  6) ARGS=(ui) ;;
-  7) ARGS=(doctor) ;;
-  *) die "1~7 중에서 고르세요. 입력한 값: $CHOICE" ;;
+  4) ARGS=(list) ;;
+  5) ARGS=(doctor) ;;
+  *) die "1~5 중에서 고르세요. 입력한 값: $CHOICE" ;;
 esac
 
-if [ "$DASHBOARD_READY" -eq 0 ] && [ "${ARGS[0]}" = "monthly" ]; then
+# 보고서·목록은 **태스크 맵**을 대시보드에서 읽습니다. 계정이 없으면 맵 없이
+# 만들어지는 게 아니라 아예 멈춥니다 — 항목 구성이 조용히 달라지는 편이 나쁩니다.
+if [ "$DASHBOARD_READY" -eq 0 ] && { [ "${ARGS[0]}" = "monthly" ] || [ "${ARGS[0]}" = "list" ]; }; then
   die "보고서를 만들려면 대시보드 계정이 필요합니다." \
     "reporter/.env 의 SUPABASE_EMAIL / SUPABASE_PASSWORD 를 채운 뒤 다시 실행하세요." \
     "" \
-    "운영 건수를 0 으로 채워서 만들지 않습니다 — '0건' 과 '못 읽음' 은 다른 사실입니다."
+    "운영 건수를 0 으로 채워서 만들지 않습니다 — '0건' 과 '못 읽음' 은 다른 사실입니다." \
+    "태스크 맵도 대시보드가 원본이라, 못 읽으면 항목 구성이 지난달과 달라집니다."
 fi
 
 # ── 6. 실행 ──────────────────────────────────────────────────────────────────
@@ -222,13 +223,13 @@ if [ "$STATUS" -ne 0 ]; then
     "위 메시지를 먼저 보세요. 가장 흔한 원인은 쿠키 만료입니다." \
     "" \
     "  · 쿠키 만료  → Chrome 으로 desk 에 다시 로그인하면 끝입니다" \
-    "  · 그 외      → 4번 점검을 돌려 보세요"
+    "  · 그 외      → 5번 점검을 돌려 보세요"
 fi
 
 ok "끝났습니다"
 
 # 보고서를 만들었으면 결과 폴더를 엽니다. 어디 생겼는지 찾게 두지 않습니다.
-if [ "${ARGS[0]}" = "monthly" ] || [ "${ARGS[0]}" = "list" ] || [ "${ARGS[0]}" = "weekly" ]; then
+if [ "${ARGS[0]}" = "monthly" ] || [ "${ARGS[0]}" = "list" ]; then
   printf '\n'
   open "$ROOT/out" 2>/dev/null || warn "out 폴더를 자동으로 열지 못했습니다: $ROOT/out"
 fi

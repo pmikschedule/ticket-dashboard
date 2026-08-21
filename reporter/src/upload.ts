@@ -1,5 +1,5 @@
 /**
- * 스냅샷·태스크 맵을 대시보드(Supabase)로 올립니다.
+ * 스냅샷을 대시보드(Supabase)로 올립니다.
  *
  * **이 도구가 대시보드에 쓰는 유일한 곳입니다.** 나머지는 전부 읽기입니다.
  * desk 인증이 이 Mac 의 Chrome 쿠키라 수집이 여기를 벗어날 수 없고, 그래서
@@ -11,7 +11,6 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Snapshot } from './types.ts'
-import type { TaskMap } from './taskmap.ts'
 
 /** 표에 들어갈 모양. 순수 변환이라 테스트로 못박습니다 */
 export interface SnapshotRow {
@@ -64,23 +63,15 @@ export async function uploadSnapshot(
   return { day: row.day, sizeKb: Math.round(JSON.stringify(row.state).length / 1024) }
 }
 
-/**
- * 태스크 맵을 올립니다. 행은 `id = 1` 하나뿐입니다.
+/*
+ * **태스크 맵 업로드는 여기 없습니다.**
  *
- * **덮어쓰기입니다.** 지금은 로컬 파일이 원본이고 대시보드가 사본입니다.
- * 3단계에서 화면이 편집을 맡으면 방향이 뒤집히므로, 그때 이 함수는 사라지거나
- * '내려받기' 로 바뀝니다 — 양쪽에서 고칠 수 있는 상태를 오래 두면 안 됩니다.
+ * 있었고, 지웠습니다. 로컬 `config/taskmap.json` 을 대시보드로 덮어썼는데 편집이
+ * 화면으로 옮겨 간 뒤로는 그 파일이 비어 있었습니다 — 스캔 한 번이면 화면에서
+ * 만든 분류가 통째로 날아가는 상태였고, 낙관적 잠금도 우회했습니다.
+ * 지금 방향은 한쪽뿐입니다: 대시보드가 원본이고 이 도구는 `dashboard.fetchTaskMap`
+ * 으로 읽기만 합니다.
  */
-export async function uploadTaskMap(client: SupabaseClient, map: TaskMap): Promise<number> {
-  const { error } = await client
-    .from('task_map')
-    .update({ version: map.version, entries: map.entries, updated_at: new Date().toISOString() })
-    .eq('id', 1)
-  if (error) {
-    throw new Error(`태스크 맵 업로드 실패: ${error.message}`)
-  }
-  return map.entries.length
-}
 
 /** 대시보드에 이미 올라간 날짜들. 무엇이 빠졌는지 보고 채웁니다 */
 export async function uploadedDays(client: SupabaseClient): Promise<Set<string>> {

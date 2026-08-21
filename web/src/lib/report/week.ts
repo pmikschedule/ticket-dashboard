@@ -104,6 +104,56 @@ export function rangeLabel(w: Week): string {
   return `${short(w.from, '화')} ~ ${short(w.to, '월')}`
 }
 
+/**
+ * **어느 구간을 만들 수 있는가** — 오늘과 스냅샷 날짜를 나란히 놓습니다.
+ *
+ * 주간 보고서는 desk 스냅샷 하나로 만듭니다. 그런데 수집은 특정 PC 의 Chrome
+ * 쿠키에 묶여 있어 **며칠씩 밀릴 수 있습니다.** 밀린 스냅샷으로 만들면 화면은
+ * 아무 말 없이 지난 구간의 보고서를 내놓습니다 — 서식도 건수도 멀쩡해 보이는데
+ * 내용이 2주 전입니다. 실제로 그랬습니다 (스냅샷 8/13, 오늘 8/21 → 8/4~8/10).
+ *
+ * 그래서 둘을 따로 계산해 화면이 **차이를 말하게** 합니다.
+ *
+ * - `target`    오늘 기준 만들어야 할 구간 (= 방금 끝난 화~월)
+ * - `buildable` 이 스냅샷이 실제로 뒷받침하는 구간
+ * - `fresh`     스냅샷이 `target` 마감일 이후에 떴는가
+ *
+ * `buildable` 로 계속 만드는 이유는, 오늘 날짜로 우겨 만들면 그 구간에 아무
+ * 자료가 없어 **빈 보고서**가 나오기 때문입니다. 빈 보고서는 밀렸다는 사실보다
+ * 알아채기 어렵습니다. 지난 구간을 만들되 지난 구간이라고 말합니다.
+ */
+/**
+ * 오늘 날짜(`YYYY-MM-DD`) — **로컬 달력 기준**입니다.
+ *
+ * `toISOString()` 을 쓰면 UTC 라 한국 시간 오전 9시 이전에는 어제가 나옵니다.
+ * 화~월 구간은 팀이 쓰는 달력의 요일이므로 로컬로 읽어야 맞습니다.
+ */
+export function todayIso(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
+export interface WeekTarget {
+  target: Week
+  buildable: Week
+  fresh: boolean
+  /** 몇 주 밀렸는가. 0 이면 최신입니다 */
+  behindWeeks: number
+}
+
+export function weekForSnapshot(snapshotDay: string, today: string): WeekTarget {
+  const target = currentWeek(today)
+  const buildable = currentWeek(snapshotDay)
+  const behind = Math.round((toUtc(target.to) - toUtc(buildable.to)) / (7 * DAY))
+  return {
+    target,
+    buildable,
+    // 마감일 당일 스냅샷도 그 구간을 덮습니다 — 월요일 저녁 스캔이 정상 운영입니다
+    fresh: snapshotDay.slice(0, 10) >= target.to,
+    behindWeeks: Math.max(0, behind),
+  }
+}
+
 /** 그 날짜가 이 구간에 속하는지. 문자열 비교라 타임존에 안 흔들립니다 */
 export function inWeek(iso: string | null | undefined, w: Week): boolean {
   if (!iso) return false

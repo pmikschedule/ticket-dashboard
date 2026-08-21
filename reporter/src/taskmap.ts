@@ -7,7 +7,10 @@
  * 등록 습관에 따라 들쭉날쭉해집니다.
  *
  * 그 조정을 **매번 손으로** 하면 보고서 포맷이 매주 달라집니다. 그래서 규칙을
- * 파일에 남기고 기계가 매번 같게 적용합니다. 이 파일이 그 규칙입니다.
+ * 남겨 두고 기계가 매번 같게 적용합니다. 이 파일이 그 규칙을 얹는 순수 함수이고,
+ * 규칙 자체는 **대시보드의 `task_map` 한 행**에 있습니다 (`dashboard.fetchTaskMap`).
+ * 편집기는 이슈트래커의 태스크맵 화면 하나뿐입니다 — 편집이 두 곳이면 한쪽이
+ * 다른 쪽을 소리 없이 덮어씁니다.
  *
  * 규칙은 **한 종류**입니다 — 보고 항목(entry) 하나가 desk 태스크 N개를 가집니다.
  * 통합·프로젝트 재배정·명칭 변경·제외가 전부 이 한 구조의 조합입니다. 축을 넷으로
@@ -17,8 +20,6 @@
  * 원본을 고치면 다음 스캔이 덮어쓰고 desk 와 대조도 못 합니다.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { dirname } from 'node:path'
 import type { DeskState, DeskWork } from './types.ts'
 
 export const TASKMAP_VERSION = 1
@@ -82,37 +83,6 @@ export function validateTaskMap(map: TaskMap): string[] {
     }
   }
   return errors
-}
-
-// ---------------------------------------------------------------------------
-// 읽기 · 쓰기
-// ---------------------------------------------------------------------------
-
-/** 파일이 없으면 **빈 맵**입니다. 맵 없이도 보고서는 나와야 합니다 */
-export function loadTaskMap(path: string): TaskMap {
-  if (!existsSync(path)) return emptyTaskMap()
-  const raw = JSON.parse(readFileSync(path, 'utf8')) as Partial<TaskMap>
-  return {
-    version: raw.version ?? TASKMAP_VERSION,
-    updatedAt: raw.updatedAt ?? '',
-    entries: (raw.entries ?? []).map((e) => ({ ...e, members: e.members ?? [] })),
-  }
-}
-
-/**
- * 저장 — 임시 파일에 쓰고 rename 합니다.
- *
- * 쓰는 도중에 죽어도 기존 파일이 안 깨집니다. 이 파일은 사람이 몇 시간 걸려
- * 만든 자산이고, 스냅샷과 달리 **다시 뽑을 수 없습니다.**
- */
-export function saveTaskMap(path: string, map: TaskMap): void {
-  const errors = validateTaskMap(map)
-  if (errors.length > 0) throw new Error(`태스크 맵이 올바르지 않습니다: ${errors.join(' · ')}`)
-
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, `${JSON.stringify(map, null, 2)}\n`, 'utf8')
-  renameSync(tmp, path)
 }
 
 // ---------------------------------------------------------------------------

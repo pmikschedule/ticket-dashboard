@@ -49,6 +49,23 @@ export async function fetchState(deskUrl: string, cookie: string): Promise<Fetch
   return { state: body.state, email: body.email ?? null, tier: body.tier ?? null }
 }
 
+/** 오늘 날짜(`YYYY-MM-DD`). 스냅샷 파일명과 같은 규칙입니다 */
+export function todayIso(): string {
+  return new Date().toISOString().slice(0, 10)
+}
+
+/**
+ * 두 날짜 사이의 일수. **문자열 날짜만 다룹니다** — 로컬 타임존으로 파싱하면
+ * 자정 경계에서 하루가 밀립니다.
+ */
+export function daysBetween(from: string, to: string): number {
+  const ms = (iso: string) => {
+    const [y, m, d] = iso.slice(0, 10).split('-').map(Number)
+    return Date.UTC(y!, (m ?? 1) - 1, d ?? 1)
+  }
+  return Math.round((ms(to) - ms(from)) / 86_400_000)
+}
+
 export function makeSnapshot(state: DeskState, scannedAt: Date): Snapshot {
   const yearMonth = scannedAt.toISOString().slice(0, 7)
   return {

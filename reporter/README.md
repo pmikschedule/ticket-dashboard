@@ -12,12 +12,15 @@ desk 를 주기적으로 떠서 **스냅샷을 쌓고 대시보드에 올립니�
 상수로 옮겨져 있습니다** — 원본이 없어도 생성은 됩니다.
 
 ```
-                                       ┌─→ 주간 diff ─→ out/주간업무보고_YYYY-Www.pptx
-desk.saebom.me/api/state ─→ 태스크 맵 ─┤
-                              ↑        ├─→ 집계 ────→ out/활동_월간요약보고서_YYYY-MM.pptx
-티켓 대시보드 (Supabase) ─────┼────────┘              out/업무목록_YYYY-MM-DD.xlsx
-                        config/taskmap.json
-                        (npm run ui 로 편집)
+desk.saebom.me/api/state ─→ 스냅샷 ─→ 대시보드(desk_snapshots)
+                              │                    │
+                              │                    └─→ 이슈트래커 [태스크맵] 화면
+                              │                          주간 pptx · 태스크 맵 편집
+                              ↓
+                           태스크 맵 ─→ 집계 ─→ out/활동_월간요약보고서_YYYY-MM.pptx
+                              ↑                out/업무목록_YYYY-MM-DD.xlsx
+                    대시보드 task_map (읽기 전용)
+                    + 티켓 (대분류 3종)
 ```
 
 ## 설치
@@ -33,14 +36,13 @@ Node 22 이상이 필요합니다 (`node:sqlite` 를 씁니다).
 ## 명령
 
 ```bash
-npm run doctor            # 설정·연결·쿠키 만료 점검
+npm run doctor            # 설정·연결·쿠키 만료 + **스냅샷 나이** 점검
 npm run scan              # desk 를 읽어 스냅샷 저장 + 대시보드 업로드
-npm run push              # 밀린 스냅샷·태스크 맵만 올리기
+npm run push              # 밀린 스냅샷만 올리기
 npm run monthly           # 지난달 보고서 생성
 npm run monthly 2026-08   # 특정 달
 npm run list              # 업무 전수 목록 xlsx (프로젝트별 · 담당자별)
-npm run ui                # 태스크 맵 편집 화면 (127.0.0.1:4173)
-npm test                  # 집계·레이아웃 165개 + 타입체크
+npm test                  # 집계·레이아웃 173개 + 타입체크
 ```
 
 터미널을 안 쓸 때는 **`start-reporter.command` 를 더블클릭**합니다. Node 버전과
@@ -84,6 +86,23 @@ desk 는 Cloudflare Access 뒤에 있고 Service Token 이 발급돼 있지 않�
 Publishable(anon) 키로 **로그인해서** 읽고 씁니다. RLS 가 그대로 살아 있습니다.
 `service_role` 키는 쓰지 않습니다 — 그 키는 에이전트 PC 의 `.env` 한 곳에만
 있어야 합니다.
+
+### 태스크 맵은 읽기만 합니다 — 원본은 대시보드
+
+**편집기는 이슈트래커의 태스크맵 화면 하나뿐입니다.** 이 도구는 `task_map` 한 행을
+읽어 월간 보고서와 업무 목록에 얹습니다 (`dashboard.fetchTaskMap`).
+
+한때 반대였습니다 — 로컬 `config/taskmap.json` 이 원본이고 `npm run ui` 로 고쳤으며
+스캔 때마다 대시보드로 덮어썼습니다. 편집이 화면으로 옮겨 간 뒤에도 그 업로드가
+남아 있었고 로컬 파일은 비어 있었습니다. **스캔 한 번이면 화면에서 만든 분류가
+통째로 날아가는 상태**였고, 화면의 낙관적 잠금도 우회했습니다. 그래서 방향을
+하나로 뒤집고 로컬 편집기와 파일을 지웠습니다.
+
+맵을 **못 읽으면 월간·목록은 멈춥니다.** 티켓과 다릅니다 — 티켓이 없으면 운영 현황
+한 절이 비고 그 사실이 각주에 남지만, 맵이 없으면 묶어 둔 항목이 원본 태스크
+여러 줄로 도로 흩어져 **본문의 모양 자체가 달라집니다.** 보고서는 멀쩡해 보이는데
+지난달과 행 구성이 다르고, 아무도 이유를 모릅니다. 항목이 **0개인 것**은 사실이므로
+그대로 진행합니다.
 
 ### 스냅샷을 대시보드로 올립니다
 
@@ -247,6 +266,13 @@ launchctl load ~/Library/LaunchAgents/me.saebom.reporter.plist
 주간 구간이 화~월이라 **월요일이 끝나야 그 주가 닫힙니다.** 월요일 저녁 스캔이
 구간 마감 상태를 담고, 화요일 아침 스캔이 그것을 대시보드에 올립니다. 보고서
 자체는 이슈트래커에서 사람이 만듭니다.
+
+> **스냅샷 나이가 곧 보고서가 밀린 정도입니다.** 주간 보고서는 대시보드에 올라간
+> 최신 스냅샷의 날짜로 구간을 정합니다 — 스냅샷이 여드레 늙으면 화면은 아무 말
+> 없이 **한 주 전 구간**을 만들어 냅니다. 서식도 건수도 멀쩡해 보이는데 내용이
+> 지난주입니다. 그래서 `doctor` 가 나이를 찍고 7일이 넘으면 실패로 셉니다.
+> 태스크맵 화면도 밀린 스냅샷을 잡으면 어느 구간이 나오는지 배너로 밝힙니다
+> (`weekForSnapshot`).
 로그는 `data/reporter.log` 에 쌓입니다.
 
 > 노트북이 잠들어 있으면 launchd 는 **깨어난 직후** 밀린 작업을 한 번 돌립니다.
@@ -260,17 +286,16 @@ src/layout.ts      역설계한 좌표·색·글꼴 (원본 도형 176개에서 
 src/draw.ts        pptx 원시 도형 — 월간·주간 렌더러가 같이 씁니다
 src/render.ts      월간 pptx 그리기 — 계산하지 않습니다
 src/aggregate.ts   월간 집계 규칙 — 순수 함수
-src/taskmap.ts     태스크 맵 적용·검증 — 순수 함수 (읽기·쓰기만 IO)
-src/suggest.ts     통합 후보 추천 — 순수 함수
-src/ui.ts          태스크 맵 로컬 웹 서버 (127.0.0.1 전용)
-src/ui/index.html  편집 화면 (의존성 없음)
+src/taskmap.ts     태스크 맵 적용·검증 — 순수 함수 (IO 없음)
+src/suggest.ts     통합 후보 추천 — 순수 함수. **지금은 아무도 안 부릅니다**
+                   (로컬 편집기와 함께 놓였던 것으로, 화면으로 옮길 후보입니다)
 src/worklist.ts    업무 전수 목록 묶기 — 순수 함수
 src/xlsx.ts        xlsx 그리기 — 계산하지 않습니다
 src/cookie.ts      Chrome 쿠키 추출·복호화
 src/desk.ts        /api/state 수집·스냅샷
-src/dashboard.ts   Supabase 티켓 조회 (대분류 3종)
-src/upload.ts      스냅샷·태스크 맵 업로드 — 이 도구가 쓰는 유일한 곳
-src/cli.ts         scan · push · monthly · list · ui · doctor
+src/dashboard.ts   Supabase 티켓 조회 (대분류 3종) · 태스크 맵 조회
+src/upload.ts      스냅샷 업로드 — 이 도구가 대시보드에 쓰는 유일한 곳
+src/cli.ts         scan · push · monthly · list · doctor
 ```
 
 ## 서식을 고칠 때

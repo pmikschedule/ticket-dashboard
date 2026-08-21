@@ -12,7 +12,6 @@
     "push": "tsx src/cli.ts push",
     "monthly": "tsx src/cli.ts monthly",
     "list": "tsx src/cli.ts list",
-    "ui": "tsx src/cli.ts ui",
     "doctor": "tsx src/cli.ts doctor",
     "test": "vitest run && tsc --noEmit"
   },
