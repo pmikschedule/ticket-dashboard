@@ -9,6 +9,12 @@
   경로가 박혀 있습니다. 저장소를 다른 곳에 두면 아래 세 군데를 고치세요:
     WorkingDirectory · ProgramArguments 의 스크립트 경로 · 로그 경로
 
+  ⚠️ 저장소를 `~/Documents` 밑에 두지 마세요. macOS 가 launchd 로 뜬 프로세스의
+     Documents 접근을 막아(TCC) `getcwd: Operation not permitted` 로 죽습니다.
+     로그 파일은 launchd 가 직접 열기 때문에 그 에러만 남고 스캔은 한 줄도 안 돕니다.
+     `/bin/zsh` 에 전체 디스크 접근 권한을 주면 풀리지만, 홈 바로 밑에 두는 편이
+     승인 없이 도는 길입니다.
+
   등록:   cp scripts/me.saebom.reporter.plist ~/Library/LaunchAgents/
           launchctl load ~/Library/LaunchAgents/me.saebom.reporter.plist
   해제:   launchctl unload ~/Library/LaunchAgents/me.saebom.reporter.plist
@@ -26,11 +32,11 @@
   <array>
     <string>/bin/zsh</string>
     <string>-lc</string>
-    <string>cd "$HOME/Documents/PMS/reporter" &amp;&amp; ./scripts/run.sh</string>
+    <string>cd "$HOME/PMS/reporter" &amp;&amp; ./scripts/run.sh</string>
   </array>
 
   <key>WorkingDirectory</key>
-  <string>/Users/milliontube/Documents/PMS/reporter</string>
+  <string>/Users/milliontube/PMS/reporter</string>
 
   <!-- 월 18:00 스캔(구간 마감) / 화 09:00 스캔 / 매월 1일 09:30 월간보고 -->
   <key>StartCalendarInterval</key>
@@ -57,8 +63,8 @@
   <false/>
 
   <key>StandardOutPath</key>
-  <string>/Users/milliontube/Documents/PMS/reporter/data/reporter.log</string>
+  <string>/Users/milliontube/PMS/reporter/data/reporter.log</string>
   <key>StandardErrorPath</key>
-  <string>/Users/milliontube/Documents/PMS/reporter/data/reporter.log</string>
+  <string>/Users/milliontube/PMS/reporter/data/reporter.log</string>
 </dict>
 </plist>

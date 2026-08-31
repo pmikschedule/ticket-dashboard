@@ -50,6 +50,28 @@ npm test                  # 집계·레이아웃 173개 + 타입체크
 보고서를 만들면 `out/` 폴더를 열어 줍니다. 정기 실행은 그대로 launchd 가 맡습니다 —
 이 파일은 손으로 돌릴 때 쓰는 것이고, 둘은 같은 CLI 를 부릅니다.
 
+## 정기 실행 — launchd
+
+```bash
+cp scripts/me.saebom.reporter.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.plist
+launchctl kickstart -p gui/$UID/me.saebom.reporter   # 즉시 한 번
+```
+
+월 18:00 · 화 09:00 스캔, 매월 1일 09:30 월간보고. 주간 구간이 화~월이라
+월요일이 끝나야 그 주가 닫히고, 그래서 두 번 뜹니다. 로그는 `data/reporter.log`.
+
+**저장소를 `~/Documents` 밑에 두지 마세요.** macOS 가 launchd 로 뜬 프로세스의
+Documents 접근을 막아(TCC) `getcwd: Operation not permitted` 로 죽습니다. 로그
+파일은 launchd 가 직접 열기 때문에 **그 에러 두 줄만 남고 스캔은 한 줄도 안
+돕니다** — 실패가 조용합니다. `/bin/zsh` 에 전체 디스크 접근 권한을 주면 풀리지만,
+홈 바로 밑(`~/PMS`)에 두는 편이 승인 없이 도는 길입니다. 옮기면 plist 의 경로
+세 곳(`ProgramArguments` · `WorkingDirectory` · 로그)을 같이 고쳐야 합니다.
+
+정기 실행이 걸려 있어도 **desk 쿠키 만료는 사람이 풉니다** (아래). 만료되면
+스캔이 조용히 실패하고 대시보드는 묵은 스냅샷을 그대로 보여 주다가, 7일이
+넘으면 `npm run doctor` 가 실패로 셉니다.
+
 ## 왜 스냅샷을 쌓는가
 
 **desk 는 현재 상태만 보관합니다.** 과거 이력이 없습니다.
