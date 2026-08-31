@@ -81,6 +81,15 @@ export interface WeeklyModel {
   reportedOn: string
   subtitle: string
 
+  /**
+   * desk 가 마지막으로 갱신된 시각(`state.updatedAt`). 없으면 null.
+   *
+   * 보고는 보통 월요일에 하고 desk 는 금요일에 갱신되므로 **둘은 늘 어긋납니다.**
+   * 이 보고서가 말하는 것은 구간이 아니라 그 시점까지의 업무 진행이므로, 어긋난
+   * 사실을 머리글에 적어 둡니다 — 안 적으면 보고일 현재로 읽힙니다.
+   */
+  deskUpdatedAt: string | null
+
   /** 비교에 쓴 지난주 스냅샷 날짜. null 이면 **기준 주차**(비교 대상 없음) */
   baseline: string | null
 
@@ -244,22 +253,51 @@ function pick(state: DeskState, d: WorkDiff, week: Week, asOf: string, hasBaseli
   })
 }
 
+/**
+ * 진행 내용 칸의 글.
+ *
+ * desk 는 업무별 메모를 거의 안 씁니다 — 2026-08-31 실측 66건 중 `detail.notes`
+ * 가 채워진 것은 8건, `assessment` 는 **0건**이었습니다. 그 둘만 읽는 동안 이
+ * 칸은 거의 빈 채로 나갔습니다.
+ *
+ * desk 자신의 `Weekly Report` 화면은 같은 자리에 `detail.analysis`(3건)와
+ * **프로젝트의 현재 상황**(`projects[].current`, 41건)을 끌어다 씁니다. 같은
+ * 순서로 떨어지게 해 두 문서의 문구를 맞춥니다 (8건 → 49건).
+ *
+ * 순서는 **좁은 것부터**입니다. 업무에 적힌 글이 있으면 그게 그 업무의 사실이고,
+ * 프로젝트 상황은 같은 프로젝트의 여러 업무에 똑같이 붙으므로 맨 뒤입니다.
+ * 넷 다 없으면 **빈칸으로 둡니다** — 없는 글을 지어내지 않습니다 (공란의 뜻은
+ * 각주가 밝힙니다).
+ */
+function detailText(w: DeskWork, project: DeskProject | undefined): string {
+  const own =
+    (w.detail?.notes ?? '').trim() ||
+    (w.assessment ?? '').trim() ||
+    (w.detail?.analysis ?? '').trim()
+  return own || (project?.current ?? '').trim()
+}
+
 /** 통합 항목이면 '구성 2/3' 을 앞에 답니다 — 진척율이 무엇을 센 값인지 밝힙니다 */
-function withMergedLabel(w: DeskWork): string {
-  const text = (w.detail?.notes ?? w.assessment ?? '').trim()
+function withMergedLabel(w: DeskWork, project: DeskProject | undefined): string {
+  const text = detailText(w, project)
   const label = mergedLabel(w)
   if (!label) return text
   return text ? `${label} · ${text}` : label
 }
 
-function toRow(w: DeskWork, d: WorkDiff, asOf: string): WeeklyRow {
+function toRow(
+  w: DeskWork,
+  d: WorkDiff,
+  asOf: string,
+  project: DeskProject | undefined,
+): WeeklyRow {
   const changedFrom = d.dueChangedFrom.get(w.id) ?? null
   const chip = chipOf(w, d, asOf)
   return {
     id: w.id,
     title: w.title,
     owner: (w.owner ?? '').trim() || '—',
-    detail: withMergedLabel(w),
+    detail: withMergedLabel(w, project),
     chip,
     progress: rowProgress(w, chip === 'done'),
     schedule: scheduleOf(w, changedFrom),
@@ -271,6 +309,33 @@ function sortRows(a: WeeklyRow, b: WeeklyRow): number {
   const c = CHIP_ORDER[a.chip] - CHIP_ORDER[b.chip]
   if (c !== 0) return c
   return a.owner.localeCompare(b.owner, 'ko') || a.title.localeCompare(b.title, 'ko')
+}
+
+/**
+ * 프로젝트에서 빌려 온 문구는 **묶음의 첫 행에만 남깁니다.**
+ *
+ * `projects[].current` 는 그 프로젝트의 **모든** 업무에 똑같이 붙습니다. 그대로
+ * 두면 같은 문장이 한 묶음에서 여러 줄 반복되는데 — 실측에서 표에 보이는 10행 중
+ * 8행이 "기획 및 개발 동시진행 진행 중" 하나였습니다 — 그건 정보가 아니라
+ * 소음이고, 행마다 다른 사실이 적혀 있으리라는 표의 약속을 깹니다.
+ *
+ * 한 번은 남깁니다. 그 프로젝트가 지금 어디쯤인지는 보고서에 있어야 합니다.
+ * 업무 자신의 글(`detail.notes` 등)은 그 업무의 사실이므로 건드리지 않습니다.
+ * 통합 항목의 '구성 2/3' 딱지도 그대로 둡니다 — 진척율이 무엇을 센 값인지는
+ * 행마다 필요합니다.
+ */
+function dedupeBorrowed(rows: WeeklyRow[], project: DeskProject | undefined): WeeklyRow[] {
+  const borrowed = (project?.current ?? '').trim()
+  if (!borrowed) return rows
+  let kept = false
+  return rows.map((r) => {
+    if (!r.detail.endsWith(borrowed)) return r
+    if (!kept) {
+      kept = true
+      return r
+    }
+    return { ...r, detail: r.detail.slice(0, -borrowed.length).replace(/ · $/, '') }
+  })
 }
 
 /**
@@ -308,7 +373,10 @@ export function groupWork(
   const make = (key: string, title: string, works: DeskWork[], standalone: boolean): WeeklyGroup => {
     const project = projects.get(key)
     const ms = project?.milestones ?? null
-    const rows = works.map((w) => toRow(w, d, asOf)).sort(sortRows)
+    const rows = dedupeBorrowed(
+      works.map((w) => toRow(w, d, asOf, projects.get(w.project ?? ''))).sort(sortRows),
+      project,
+    )
     return {
       key,
       title,
@@ -372,17 +440,70 @@ export function heldItems(state: DeskState): { label: string; body: string }[] {
 }
 
 /**
- * 차주 계획 — 다음 주가 마감인 미완료 업무. 지어내지 않고 desk 의 일정만 옮깁니다.
+ * 차주 계획 — **아직 살아 있는 미완료**. 지어내지 않고 desk 의 일정만 옮깁니다.
+ *
+ * 한때 '다음 주가 마감인 미완료' 만 뽑았습니다. 그러면 **마감이 이미 지난
+ * 미완료가 계획에서 빠집니다** — 2026-08-31 실측에서 미완료 28건(보류 제외) 중
+ * 뽑힌 것이 8건이었고, 빠진 것 중 8건이 마감을 넘긴 건이었습니다. 차주에 제일
+ * 먼저 해야 할 일이 차주 계획에 없는 셈입니다. 그래서 **지연분을 앞에 세웁니다.**
+ *
+ * 보고 시점(월요일)과 desk 갱신 시점(금요일)이 어긋나는 것은 이 보고서에서
+ * 중요하지 않습니다. 중요한 것은 **업무가 지금 어디까지 왔는가**이고, 그래서
+ * 구간이 아니라 `asOf`(우리가 아는 마지막 시점) 하나로 지연을 가릅니다.
+ *
+ * **마감이 없는 미완료는 넣지 않습니다** (실측 10건). 언제 할지 정해지지 않은
+ * 일을 차주에 하겠다고 적을 근거가 없고, 그것은 표의 진행중 행으로 이미 보입니다.
+ *
+ * **보류도 뺍니다.** 남을 기다리는 상태이지 우리가 할 일이 아니고, 이미 3장
+ * 이슈로 올라가 있습니다 (`heldItems`). 계획에 적으면 하겠다는 약속이 됩니다.
  *
  * `max` 로 자르는 것은 지면 사정이고, **몇 건 중 몇 건인지는 부르는 쪽이 알아야**
  * 각주에 적을 수 있습니다. 그래서 자른 목록과 전체 건수를 같이 돌려줍니다.
  */
-export function selectPlans(state: DeskState, next: Week, max: number): { items: string[]; total: number } {
-  const all = state.work
-    .filter((w) => w.status !== 'done' && inWeek(w.due, next))
-    .sort((a, b) => (a.due ?? '').localeCompare(b.due ?? ''))
-    .map((w) => `${w.title} (${shortDate(w.due)}${w.owner ? ` · ${w.owner}` : ''})`)
-  return { items: all.slice(0, max), total: all.length }
+export function selectPlans(
+  state: DeskState,
+  next: Week,
+  asOf: string,
+  max: number,
+): { items: string[]; total: number } {
+  const byDue = (a: DeskWork, b: DeskWork) => (a.due ?? '').localeCompare(b.due ?? '')
+  const open = state.work.filter(
+    (w) => w.status !== 'done' && w.status !== 'hold' && Boolean(w.due),
+  )
+  // `asOf` 는 늘 `next.from` 보다 앞이므로 두 목록은 겹치지 않습니다.
+  const late = open.filter((w) => (w.due as string) < asOf).sort(byDue)
+  const upcoming = open.filter((w) => inWeek(w.due, next)).sort(byDue)
+
+  const line = (w: DeskWork, overdue: boolean) =>
+    `${w.title} (${shortDate(w.due)}${overdue ? ' 지연' : ''}${w.owner ? ` · ${w.owner}` : ''})`
+
+  const lateLines = late.map((w) => line(w, true))
+  const upcomingLines = upcoming.map((w) => line(w, false))
+  return {
+    items: splitBudget(lateLines, upcomingLines, max),
+    total: lateLines.length + upcomingLines.length,
+  }
+}
+
+/**
+ * 차주 계획의 지면을 **지연분과 차주 마감분에 반씩 나눕니다.**
+ *
+ * 지연 우선으로만 자르면 자리가 넉넉하지 않을 때 전부 지연으로 찹니다 —
+ * 2026-08-31 실측에서 후보 13건 중 지연이 8건이라 `PLANS.max` 4줄이 **네 줄 다
+ * 지연**이었습니다. '차주 계획' 이라는 제목 아래 밀린 일만 남고 정작 차주에
+ * 마감인 일이 한 줄도 안 실립니다.
+ *
+ * **한쪽이 모자라면 남은 자리는 다른 쪽이 채웁니다** — 자리를 비워 두지
+ * 않습니다. 자리가 홀수면 지연 쪽이 한 줄 더 가집니다 (더 급한 쪽입니다).
+ *
+ * 순서는 나눈 뒤에도 지연이 먼저입니다.
+ */
+function splitBudget(late: string[], upcoming: string[], max: number): string[] {
+  if (!Number.isFinite(max)) return [...late, ...upcoming]
+  const half = Math.ceil(max / 2)
+  const lateN = Math.min(late.length, Math.max(half, max - upcoming.length))
+  const upcomingN = Math.min(upcoming.length, max - lateN)
+  return [...late.slice(0, lateN), ...upcoming.slice(0, upcomingN)]
 }
 
 export interface WeeklyOptions {
@@ -438,13 +559,20 @@ export function buildWeekly(
   }
 
   const allChanges = changes.length
-  const allPlans = selectPlans(state, opt.nextWeek, Number.POSITIVE_INFINITY)
+  const allPlans = selectPlans(state, opt.nextWeek, asOf, Number.POSITIVE_INFINITY)
 
   // **자리는 여기서 정해집니다.** 3·4장에 실을 것이 몇 건인지 알아야 "압축하면
   // 이슈가 지워지는가" 를 볼 수 있고, 지워진다면 압축 대신 다음 장으로 내립니다.
   const fitted = fitTable(all, opt.table, { changes: allChanges, plans: allPlans.total })
   const shown = fitted.pages.reduce((n, page) => n + page.reduce((k, g) => k + g.rows.length, 0), 0)
-  const plans = { items: allPlans.items.slice(0, fitted.maxPlans), total: allPlans.total }
+  // **여기서 `slice` 하지 않습니다.** 자리를 지연/차주에 나누는 것은 `selectPlans`
+  // 안에서 벌어지는 일이라, 몫을 모르는 채 앞에서부터 자르면 그 배분이 통째로
+  // 무의미해집니다 (자리가 넉넉할 때 앞이 전부 지연이기 때문입니다). 자리를
+  // 알게 된 지금 다시 부릅니다 — 순수 함수라 값이 같습니다.
+  const plans = {
+    items: selectPlans(state, opt.nextWeek, asOf, fitted.maxPlans).items,
+    total: allPlans.total,
+  }
   // 마일스톤이 없는 프로젝트는 레일에 그릴 것이 없어 빠집니다. 몇 개인지 적습니다.
   const railless = state.projects.length - projectRails(state).length
   const held = heldItems(state).length
@@ -470,7 +598,7 @@ export function buildWeekly(
     footnotes.push(`차주 계획 ${plans.total}건 중 ${plans.items.length}건 표기`)
   }
   if (flat.some((r) => !r.detail)) {
-    footnotes.push('진행내용 공란 = desk 에 기록 없음')
+    footnotes.push('진행내용 공란 = desk 에 기록이 없거나, 같은 묶음의 위 행과 같은 내용')
   }
 
   return {
@@ -482,6 +610,7 @@ export function buildWeekly(
     },
     reportedOn: opt.reportedOn,
     subtitle: opt.subtitle,
+    deskUpdatedAt: shortDate(state.updatedAt),
     baseline: opt.baseline,
     summary,
     pages: fitted.pages,

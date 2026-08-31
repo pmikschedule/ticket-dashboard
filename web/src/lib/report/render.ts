@@ -45,6 +45,10 @@ function renderHeader(s: Slide, m: WeeklyModel) {
   text(s, m.subtitle, { ...HEAD.subtitle, color: C.MUTED })
 
   round(s, HEAD.metaBox.x, HEAD.metaBox.y, HEAD.metaBox.w, HEAD.metaBox.h, C.PANEL)
+  // **desk 갱신일을 같이 적습니다.** 보고는 보통 월요일, desk 갱신은 금요일이라
+  // 둘은 늘 어긋납니다. 이 보고서가 말하는 것은 그 갱신 시점까지의 업무 진행이고,
+  // 안 적으면 보고일 현재의 상태로 읽힙니다. 없으면 그 짝을 통째로 뺍니다 —
+  // 모르는 날짜를 보고일로 메우지 않습니다.
   text(
     s,
     [
@@ -52,6 +56,12 @@ function renderHeader(s: Slide, m: WeeklyModel) {
       { text: `${m.period.label} (${m.period.range})   `, options: { color: C.INK } },
       { text: '보고일  ', options: { bold: true, color: C.NAVY } },
       { text: m.reportedOn, options: { color: C.INK } },
+      ...(m.deskUpdatedAt
+        ? [
+            { text: '   desk 갱신  ', options: { bold: true, color: C.NAVY } },
+            { text: m.deskUpdatedAt, options: { color: C.INK } },
+          ]
+        : []),
     ],
     { ...HEAD.metaText, sz: HEAD.metaText.sz, color: C.INK, align: 'center' },
   )
