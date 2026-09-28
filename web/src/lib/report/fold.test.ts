@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { applyTaskMap } from './apply'
 import { buildWeeklyReport } from './build'
+import { wrapLines } from './clamp'
 import { STANDALONE_RULE, TABLE } from './layout'
 import type { DeskProject, DeskState, DeskWork } from './types'
 import { addDays, holidaysIn, parseWeekLabel, snapshotsFor, weekOf } from './week'
@@ -145,27 +146,48 @@ describe('foldGroups — 자르기 전에 묶습니다', () => {
     expect(f.groups[0]!.rows.filter((r) => r.chip === 'late')).toHaveLength(3)
   })
 
+  const COLS = {
+    title: { w: TABLE.cols.title.w, sz: TABLE.cols.title.sz, lines: 1 },
+    detail: { w: TABLE.cols.detail.w, sz: TABLE.cols.detail.sz, lines: 2 },
+  }
+  /** 머리행 + 한 행만 들어가는 예산 — 반드시 묶입니다 */
+  const ONE_ROW = BOX.headerH + BOX.rowH
+
   it('묶음 행은 날짜 폭과 대표 담당자를 적습니다', () => {
     const rows = [
       row('재가입 구현', 'done', { owner: 'Ji', date: '2026-09-16' }),
       row('카카오 가입', 'done', { owner: 'Ji', date: '2026-09-18' }),
       row('도메인 등록', 'done', { owner: 'Sloan', date: '2026-09-20' }),
     ]
-    const f = foldGroups([group('m', [...rows, ...many('i', 'ing', 12)])], BUDGET, {
-      ...BOX,
-      cols: {
-        title: { w: TABLE.cols.title.w, sz: TABLE.cols.title.sz, lines: 1 },
-        detail: { w: TABLE.cols.detail.w, sz: TABLE.cols.detail.sz, lines: 2 },
-      },
-    })
-    const done = f.groups[0]!.rows.find((r) => r.chip === 'done' && (r.members ?? 1) > 1)
-    // 자리가 남아 완료가 다시 펴졌을 수도 있으니, 묶였을 때만 봅니다
-    if (done) {
-      expect(done.schedule).toBe('9/16~9/20 완료')
-      expect(done.owner).toBe('Ji 외 1')
-      expect(done.progress).toBe(100)
-      expect(done.detail).toBe('3건 묶음')
-    }
+    const done = foldGroups([group('m', rows)], ONE_ROW, { ...BOX, cols: COLS }).groups[0]!.rows[0]!
+    expect(done.members).toBe(3)
+    expect(done.schedule).toBe('9/16~9/20 완료')
+    expect(done.owner).toBe('Ji 외 1')
+    expect(done.progress).toBe(100)
+  })
+
+  it('묶음 행의 진행사항은 건수가 아니라 구성원들의 내용을 축약한 것입니다', () => {
+    // 2026-09-28: '2건 묶음' 은 줄인 게 아니라 내용을 없앤 것이었습니다
+    const rows = [
+      row('데이터 마이그레이션 및 배포', 'late', { detail: '사용자 테스트 + 마이그레이션…' }),
+      row('카보너스 통합 안정화', 'late', { detail: '코드리뷰 진행 중', detailAt: '2026-09-21' }),
+    ]
+    const r = foldGroups([group('c', rows)], ONE_ROW, { ...BOX, cols: COLS }).groups[0]!.rows[0]!
+    expect(r.detail).not.toMatch(/건 묶음/)
+    // 날짜 붙은 최신 진행 기록이 앞입니다
+    expect(r.detail.startsWith('코드리뷰 진행 중')).toBe(true)
+    expect(wrapLines(r.detail, COLS.detail.w, COLS.detail.sz).length).toBeLessThanOrEqual(2)
+  })
+
+  it('같은 글은 한 번만 — desk 는 한 메모를 여러 업무에 복사해 둡니다', () => {
+    const rows = [row('가', 'ing', { detail: '구현 진행 중' }), row('나', 'ing', { detail: '구현 진행 중' })]
+    const r = foldGroups([group('c', rows)], ONE_ROW, { ...BOX, cols: COLS }).groups[0]!.rows[0]!
+    expect(r.detail).toBe('구현 진행 중')
+  })
+
+  it('구성원 모두 글이 없으면 비웁니다 — 지어내지 않습니다', () => {
+    const r = foldGroups([group('c', many('x', 'ing', 3))], ONE_ROW, { ...BOX, cols: COLS }).groups[0]!.rows[0]!
+    expect(r.detail).toBe('')
   })
 })
 
@@ -389,5 +411,32 @@ describe('날짜 도우미', () => {
     expect(holidaysIn(h, weekOf('2026-09-28'))).toBe('추석 연휴(9/24~9/25)')
     expect(holidaysIn(h, weekOf('2026-10-12'))).toBe('한글날(10/9)')
     expect(holidaysIn(h, weekOf('2026-09-21'))).toBe('')
+  })
+})
+
+describe('진행사항 줄바꿈 — 어느 뷰어에서든 같은 두 줄', () => {
+  it('보고서의 진행사항은 줄이 박혀 있고, 각 줄이 칸 한 줄에 들어갑니다', () => {
+    // Keynote 는 한글을 글자 단위로 접어 `본인인증 불 / 가…` 처럼 단어 중간이 끊겼습니다
+    const note = (t: string) => ({ analysis: null, duration: null, improvements: null, testCases: [], checklist: [], notes: t })
+    const m = buildWeeklyReport({
+      state: state([
+        work({ id: 'a', detail: note('미등록 시 본인인증 불가 → 운영 배포 불가 (배포 선결조건)') }),
+        work({ id: 'b', detail: note('사용자 테스트 + 마이그레이션 + UI 등 피드백 반영 + 내부 인증 라이브러리 연동') }),
+      ]),
+      day: '2026-09-28',
+      base: null,
+      baseDay: null,
+      entries: [],
+      tickets: [],
+      weekId: '2026-09-28',
+      subtitle: 'SW',
+    }).model
+    for (const r of m.pages.flat().flatMap((g) => g.rows)) {
+      const lines = r.detail.split('\n')
+      expect(lines.length).toBeLessThanOrEqual(2)
+      for (const l of lines) expect(wrapLines(l, TABLE.cols.detail.w, TABLE.cols.detail.sz).length).toBe(1)
+    }
+    const a = m.pages.flat().flatMap((g) => g.rows).find((r) => r.id === 'a')!
+    expect(a.detail).toBe('미등록 시 본인인증\n불가…')
   })
 })

@@ -288,6 +288,9 @@ function renderRow(s: Slide, row: WeeklyRow, y: number, zebra: boolean, standalo
     sz: TABLE.cols.owner.sz,
     color: C.INK,
   })
+  // 진행사항은 두 줄까지 옵니다 (`weekly.buildWeekly` 가 줄을 박아 둡니다). 줄 간격을
+  // 뷰어에 맡기면 대체 글꼴(맑은 고딕 1.33em)에서 두 줄이 행(0.26인치 = 18.7pt)을
+  // 넘어 위아래 선에 닿습니다. 고정값으로 두 줄 = 16.8pt 안에 묶습니다.
   text(s, row.detail, {
     x: TABLE.cols.detail.x,
     y,
@@ -295,6 +298,7 @@ function renderRow(s: Slide, row: WeeklyRow, y: number, zebra: boolean, standalo
     h: rowH,
     sz: TABLE.cols.detail.sz,
     color: C.MUTED,
+    lineSpacing: TABLE.cols.detail.lineSpacing,
   })
 
   const chip = WEEKLY_CHIP[row.chip]

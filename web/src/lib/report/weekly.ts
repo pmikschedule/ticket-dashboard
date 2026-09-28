@@ -38,7 +38,7 @@ function rowProgress(work: DeskWork, done: boolean): number | null {
   return typeof work.progress === 'number' ? work.progress : null
 }
 import { mergedLabel } from './apply'
-import { briefText, listLine } from './clamp'
+import { briefText, clampText, listLine, wrapLines } from './clamp'
 import { projectRails, type ProjectRail } from './milestones'
 import { summarizeOps, type OpsSummary, type ReportTicket } from './ops'
 import { inWeek, rangeLabel, type Week } from './week'
@@ -69,6 +69,8 @@ export interface WeeklyRow {
    * 각주의 '몇 건 중 몇 건' 이 행 수가 아니라 업무 수를 세게 합니다.
    */
   members?: number
+  /** 진행사항이 desk 진행 기록에서 왔으면 그 기록의 날짜. 아니면 없음 */
+  detailAt?: string | null
   /** desk 마감일 원본. 일정 칸이 완료일을 적는 행에서도 '일정 변경' 은 마감일로 씁니다 */
   due?: string | null
   /** 금주에 마감일이 바뀌었으면 이전 값. 3장 '일정 변경' 이 이걸 씁니다 */
@@ -329,6 +331,10 @@ function detailText(w: DeskWork, project: DeskProject | undefined, asOf: string)
  * 형식이 다른 항목은 조용히 건너뜁니다 — 필드가 문서화돼 있지 않습니다.
  */
 export function latestLog(w: DeskWork, asOf: string): string {
+  return latestLogEntry(w, asOf)?.body ?? ''
+}
+
+function latestLogEntry(w: DeskWork, asOf: string): { at: string; body: string } | null {
   let best: { at: string; body: string } | null = null
   for (const e of w.log ?? []) {
     if (!e || typeof e !== 'object') continue
@@ -338,7 +344,7 @@ export function latestLog(w: DeskWork, asOf: string): string {
     if (day > asOf) continue
     if (!best || day >= best.at) best = { at: day, body: body.trim() }
   }
-  return best?.body ?? ''
+  return best
 }
 
 /** 통합 항목이면 '구성 2/3' 을 앞에 답니다 — 진척율이 무엇을 센 값인지 밝힙니다 */
@@ -347,6 +353,11 @@ function withMergedLabel(w: DeskWork, project: DeskProject | undefined, asOf: st
   const label = mergedLabel(w)
   if (!label) return text
   return text ? `${label} · ${text}` : label
+}
+
+/** 진행사항이 진행 기록에서 왔으면 그 날짜. 묶음 행이 최신 기록을 앞에 세울 때 씁니다 */
+function detailDate(w: DeskWork, asOf: string): string | null {
+  return latestLogEntry(w, asOf)?.at || null
 }
 
 function toRow(
@@ -362,6 +373,7 @@ function toRow(
     title: w.title,
     owner: (w.owner ?? '').trim() || '—',
     detail: withMergedLabel(w, project, asOf),
+    detailAt: detailDate(w, asOf),
     chip,
     progress: rowProgress(w, chip === 'done'),
     schedule: scheduleOf(w, changedFrom),
@@ -663,6 +675,15 @@ export function buildWeekly(
   // **자리는 여기서 정해집니다.** 3·4장에 실을 것이 몇 건인지 알아야 "압축하면
   // 이슈가 지워지는가" 를 볼 수 있고, 지워진다면 압축 대신 다음 장으로 내립니다.
   const fitted = fitTable(all, opt.table, { changes: allChanges, plans: allPlans.total })
+  // **줄바꿈 자리를 여기서 정합니다.** 뷰어마다 한글을 접는 방식이 달라서 —
+  // PowerPoint 는 어절, Keynote 는 글자 단위 — 같은 글이 `미등록 시 본인인증 불 / 가…`
+  // 처럼 단어 중간에서 끊겼습니다. 어림으로 잰 줄을 그대로 박아 두면 어느 뷰어에서든
+  // 같은 두 줄입니다. 어림이 넉넉하므로 박아 둔 한 줄이 다시 접히지 않습니다.
+  if (cols) {
+    fitted.pages = fitted.pages.map((page) =>
+      page.map((g) => ({ ...g, rows: g.rows.map((r) => ({ ...r, detail: wrapLines(r.detail, cols.detail.w, cols.detail.sz).join('\n') })) })),
+    )
+  }
   const shown = fitted.pages.reduce(
     (n, page) => n + page.reduce((k, g) => k + g.rows.reduce((j, r) => j + (r.members ?? 1), 0), 0),
     0,
@@ -1080,8 +1101,9 @@ export function foldGroups(
  *
  * - 안건: 이름을 들어가는 만큼 늘어놓고 나머지는 `외 N건`
  * - 담당: 가장 많이 맡은 사람 `외 N`
- * - 진행사항: `N건 묶음` — 행마다 다른 글을 한 칸에 담을 수 없고, 하나만 고르면
- *   나머지 업무의 글처럼 읽힙니다. 묶였다는 사실을 적습니다
+ * - 진행사항: 묶인 업무들의 진행 내용을 **축약해 이어 붙입니다** (`foldedDetail`).
+ *   한때 `2건 묶음` 이라고 건수만 적었는데, 그건 내용이 아니라 표시였습니다 —
+ *   2026-09-28 요청: "줄이는 게 아니라 항목의 내용을 축약하라" 
  * - 일정: 날짜 폭 (`9/16~9/20 완료`)
  */
 function foldRows(
@@ -1099,7 +1121,8 @@ function foldRows(
     id: `fold:${grp.key}:${chip}`,
     title: cols ? listLine(names, cols.title.w, cols.title.sz) : names.join(', '),
     owner: leadOwner(rows.map((r) => r.owner)),
-    detail: `${rows.length}건 묶음`,
+    detail: foldedDetail(rows, cols?.detail),
+    detailAt: null,
     chip,
     progress: chip === 'done' ? 100 : null,
     schedule: span ? (chip === 'done' ? `${span} 완료` : span) : '(계획)',
@@ -1108,6 +1131,34 @@ function foldRows(
     due: null,
     dueChangedFrom: null,
   }
+}
+
+/**
+ * 묶음 행의 진행사항 — 구성원들의 글을 겹치지 않게 모아 칸에 맞게 줄입니다.
+ *
+ * **날짜 붙은 진행 기록이 앞, 최근 것부터**입니다. 그게 그 묶음의 지금 상황이고,
+ * 칸이 좁아 뒤쪽은 `…` 로 잘릴 수 있습니다. 같은 글은 한 번만 — desk 는 한 메모를
+ * 여러 업무에 복사해 둡니다 (카보너스 세 건이 같은 문장이었습니다).
+ * 아무도 글이 없으면 비웁니다. 지어내지 않습니다.
+ */
+function foldedDetail(rows: WeeklyRow[], col: ColumnFit | undefined): string {
+  const seen = new Set<string>()
+  let cut = false
+  const parts: string[] = []
+  for (const r of [...rows].sort((a, b) => (b.detailAt ?? '').localeCompare(a.detailAt ?? ''))) {
+    const t = r.detail.trim()
+    if (t.endsWith('…')) cut = true
+    const bare = t.replace(/…$/, '').trim()
+    if (bare && !seen.has(bare)) {
+      seen.add(bare)
+      parts.push(bare)
+    }
+  }
+  if (parts.length === 0) return ''
+  // 구성원 글이 이미 잘려 있었으면 끝에 그 사실을 남깁니다
+  // 쉼표로 잇습니다 — `·` 로 이으면 줄이 `· 사용자 테스트…` 처럼 기호로 시작합니다
+  const joined = `${parts.join(', ')}${cut ? '…' : ''}`
+  return col ? clampText(joined, col.w, col.sz, col.lines) : joined
 }
 
 /** `Ji 외 1` — 가장 많이 맡은 사람을 대표로. 담당 칸(0.62인치)에 이름을 다 늘어놓으면 넘칩니다 */

@@ -360,6 +360,10 @@ describe('표 칸 좌표', () => {
     expect(TABLE.groupH - (g.bar.dy + g.bar.h)).toBeGreaterThanOrEqual(0.02)
   })
 
+  it('진행사항 두 줄이 행 높이 안에 들어갑니다 (줄 간격 고정)', () => {
+    expect(TABLE.cols.detail.lineSpacing * 2).toBeLessThan(TABLE.rowH * 72)
+  })
+
   it('진행사항 칸은 여덟 글자 폭입니다 (7.3pt 한글 한 글자 ≒ 0.101인치)', () => {
     const head = TABLE.headCells.find((h) => h.label === '진행사항')
     expect(head).toBeDefined()

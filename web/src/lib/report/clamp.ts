@@ -106,8 +106,9 @@ export function clampText(s: string, w: number, sz: number, maxLines: number): s
  *
  * 1. 안건 이름을 되풀이하는 머리를 뗍니다 (`앱 총괄 — 권한관리…` → `권한관리…`).
  *    바로 왼쪽 칸이 안건이라 같은 말을 두 번 싣는 셈입니다
- * 2. 그대로 들어가면 그대로
- * 3. 괄호 속 부연(`(Sloan 안내 예정)`)을 뺍니다
+ * 2. 괄호 속 부연(`(Sloan 안내 예정)`·`(배포 선결조건)`)은 **늘** 뺍니다. 들어가더라도
+ *    이 칸은 한눈에 읽히는 요지 자리입니다 (2026-09-28 요청: "간략하게")
+ * 3. 그대로 들어가면 그대로
  * 4. 첫 마디만 남깁니다 (`—`·`→`·쉼표 앞) — 뒤가 있다는 뜻으로 `…`
  * 5. 그래도 길면 칸 끝에서 자릅니다
  *
@@ -119,13 +120,12 @@ export function briefText(text: string, title: string, w: number, sz: number, ma
   if (head && t.startsWith(head) && t.length > head.length) {
     t = t.slice(head.length).replace(/^[\s—–\-:·|,]+/, '')
   }
-  t = t.replace(/[.。]$/, '')
+  // 괄호만 있던 글이면 괄호를 벗겨 속을 남깁니다 — 빈칸으로 만들지 않습니다
+  const bare = t.replace(/\s*[(（][^()（）]*[)）]/g, '').trim()
+  t = (bare || t.replace(/^[(（]|[)）]$/g, '')).replace(/[.。]$/, '').trim()
   if (!t || fits(t, w, sz, maxLines)) return t
 
-  const bare = t.replace(/\s*[(（][^()（）]*[)）]/g, '').trim()
-  if (bare && fits(bare, w, sz, maxLines)) return bare
-
-  const src = bare || t
+  const src = t
   const clause = src.split(/\s+[—–→]\s+|[,;]\s+|\.\s+/)[0]?.replace(TRAIL, '').trim() ?? ''
   if (clause && clause !== src && fits(`${clause}…`, w, sz, maxLines)) return `${clause}…`
 

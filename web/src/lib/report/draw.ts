@@ -38,6 +38,11 @@ export interface TextOpt {
   bold?: boolean
   align?: 'left' | 'center' | 'right'
   valign?: 'top' | 'middle' | 'bottom'
+  /**
+   * 줄 간격(pt, 고정값). 없으면 글꼴 기본값 — 뷰어·대체 글꼴마다 다릅니다.
+   * 여러 줄이 좁은 칸에 들어가야 하는 곳만 줍니다 (주간 표 진행사항).
+   */
+  lineSpacing?: number
 }
 
 export function text(s: Slide, body: string | PptxGenJS.TextProps[], o: TextOpt) {
@@ -52,6 +57,7 @@ export function text(s: Slide, body: string | PptxGenJS.TextProps[], o: TextOpt)
     bold: o.bold ?? false,
     align: o.align ?? 'left',
     valign: o.valign ?? 'middle',
+    ...(o.lineSpacing ? { lineSpacing: o.lineSpacing } : {}),
     margin: 0,
     // 한 줄짜리 칸이 자동 줄바꿈으로 밀리면 좌표가 어긋납니다.
     // 표 본문만 줄바꿈을 허용하고 나머지는 호출부에서 잘라 넣습니다.

@@ -133,6 +133,9 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
 - **진행사항 칸은 desk 진행 기록(`work.log`)의 최근 것이 먼저**이고, 칸(0.9인치·두 줄)을
   넘지 않게 줄입니다 (`clamp.briefText`). 메모는 몇 주째 같은 설명이고 기록은 그
   시점의 상황입니다. 넘친 글은 아래 행과 겹쳐 그려지고 파워포인트는 알려 주지 않습니다.
+  줄바꿈 자리는 우리가 박아 넣고 줄 간격도 고정입니다 — Keynote 는 한글을 글자
+  단위로 접어 `본인인증 불 / 가…` 처럼 끊었습니다. 묶음 행의 진행사항은 `N건 묶음`
+  같은 건수가 아니라 **구성원들의 내용을 축약한 것**입니다 (최신 기록 먼저).
 - **태스크 맵은 한 행(`task_map`)이고 낙관적 잠금으로 저장합니다.** 읽을 때 본
   `updated_at` 을 조건에 걸어, 그사이 남이 저장했으면 거절하고 다시 읽게 합니다.
   잠금이 없으면 두 사람이 같이 편집할 때 앞사람의 분류가 통째로 사라지는데
@@ -178,10 +181,10 @@ import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 �
 ## 명령
 
 ```bash
-cd web      && npm test && npm run build   # 순수 로직 310개 + 타입체크
+cd web      && npm test && npm run build   # 순수 로직 316개 + 타입체크
 cd agent    && pytest -q                   # 순수 로직·파이프라인 196개
 cd agent    && ticket-agent doctor         # 설정·연결 점검
-cd reporter && npm test                    # 집계·레이아웃 173개 + 타입체크
+cd reporter && npm test                    # 집계·레이아웃 176개 + 타입체크
 cd reporter && npm run doctor              # 설정·연결·쿠키 + 스냅샷 나이 점검
 cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
 cd reporter && npm run push                # 밀린 스냅샷만 올리기
