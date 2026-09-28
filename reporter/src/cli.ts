@@ -37,7 +37,7 @@ import { TABLE } from './layout.ts'
 import { writeReport } from './render.ts'
 import { buildWorkList, summarizeByOwner } from './worklist.ts'
 import { applyTaskMap, mapFootnotes, type TaskMap } from './taskmap.ts'
-import { uploadSnapshot, uploadedDays } from './upload.ts'
+import { toUpload, uploadSnapshot, uploadedDays } from './upload.ts'
 import { writeWorkList } from './xlsx.ts'
 import type { TicketRow } from './types.ts'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -108,9 +108,9 @@ async function cmdScan() {
 /**
  * 대시보드에 올립니다.
  *
- * **로컬 파일이 원본이고 대시보드가 사본입니다.** 로컬에 있는데 대시보드에 없는
- * 날짜만 올립니다 — 이미 올린 것을 매번 다시 올리면 스냅샷 하나가 수백 KB 라
- * 스캔마다 몇 MB 를 왕복하게 됩니다.
+ * **로컬 파일이 원본이고 대시보드가 사본입니다.** 대시보드에 없거나, 있어도 로컬이
+ * 더 늦게 뜬 날짜만 올립니다 (`toUpload`) — 이미 올린 것을 매번 다시 올리면
+ * 스냅샷 하나가 수백 KB 라 스캔마다 몇 MB 를 왕복하게 됩니다.
  */
 async function pushAll(opt: { quiet?: boolean } = {}) {
   if (!cfg.supabaseUrl || !cfg.supabaseEmail) {
@@ -128,7 +128,11 @@ async function pushAll(opt: { quiet?: boolean } = {}) {
     })
 
     const already = await uploadedDays(client)
-    const missing = listSnapshots(cfg.snapshotDir).filter((f) => !already.has(f.slice(0, 10)))
+    const local = listSnapshots(cfg.snapshotDir).map((file) => ({
+      file,
+      scannedAt: readSnapshot(cfg.snapshotDir, file).meta.scannedAt,
+    }))
+    const missing = toUpload(local, already)
 
     let kb = 0
     for (const file of missing) {
@@ -349,7 +353,7 @@ async function cmdDoctor() {
       // **스냅샷 나이가 곧 보고서가 밀린 정도입니다.** 주간 보고서는 대시보드에
       // 올라간 최신 스냅샷의 날짜로 구간을 정하므로, 여기가 늙으면 화면은
       // 멀쩡한 얼굴로 지난 구간을 만들어 냅니다.
-      const days = [...(await uploadedDays(client))].sort()
+      const days = [...(await uploadedDays(client)).keys()].sort()
       const newest = days[days.length - 1]
       if (!newest) {
         ok = false

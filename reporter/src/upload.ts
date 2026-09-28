@@ -73,11 +73,36 @@ export async function uploadSnapshot(
  * 으로 읽기만 합니다.
  */
 
-/** 대시보드에 이미 올라간 날짜들. 무엇이 빠졌는지 보고 채웁니다 */
-export async function uploadedDays(client: SupabaseClient): Promise<Set<string>> {
-  const { data, error } = await client.from('desk_snapshots').select('day')
+/** 대시보드에 이미 올라간 날짜와 그 스캔 시각. 무엇이 빠졌거나 묵었는지 보고 채웁니다 */
+export async function uploadedDays(client: SupabaseClient): Promise<Map<string, string>> {
+  const { data, error } = await client.from('desk_snapshots').select('day, scanned_at')
   if (error) {
     throw new Error(`업로드 목록 조회 실패: ${error.message}`)
   }
-  return new Set((data as { day: string }[]).map((r) => r.day))
+  return new Map((data as { day: string; scanned_at: string }[]).map((r) => [r.day, r.scanned_at]))
+}
+
+/**
+ * 올려야 할 로컬 스냅샷 — 대시보드에 **없거나, 있어도 로컬이 더 늦게 뜬** 것.
+ *
+ * 한때 없는 날짜만 올렸습니다. 그런데 스냅샷은 하루 한 개(날짜가 키)라 같은 날
+ * 두 번째 스캔은 로컬 파일만 덮어쓰고 대시보드에는 **아침 것이 그대로 남았습니다.**
+ * 2026-09-14 는 대시보드에 11:59 것(desk 원본 9/11)이, 로컬에 18:00 것(원본 9/14)이
+ * 있었고, 9/28 은 오전 수동 스캔 때문에 그날 18:00 정기 스캔이 올라가지 않을
+ * 참이었습니다 — 보고 당일 desk 에 적은 진행이 주간보고서에 안 실리는 경로입니다.
+ * `uploadSnapshot` 의 "하루에 여러 번 스캔하면 마지막 것이 남습니다" 가 이제 참입니다.
+ *
+ * 시각은 문자열이 아니라 시점으로 비교합니다 (`Z` 와 `+00:00` 이 섞여 옵니다).
+ */
+export function toUpload(
+  local: { file: string; scannedAt: string }[],
+  remote: Map<string, string>,
+): string[] {
+  return local
+    .filter(({ file, scannedAt }) => {
+      const up = remote.get(file.slice(0, 10))
+      if (!up) return true
+      return Date.parse(scannedAt) > Date.parse(up)
+    })
+    .map((l) => l.file)
 }

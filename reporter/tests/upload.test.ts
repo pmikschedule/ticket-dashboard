@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as upload from '../src/upload.ts'
-import { snapshotRow } from '../src/upload.ts'
+import { snapshotRow, toUpload } from '../src/upload.ts'
 import type { DeskState, Snapshot } from '../src/types.ts'
 
 function state(over: Partial<DeskState> = {}): DeskState {
@@ -62,5 +62,29 @@ describe('업로드 방향', () => {
       'uploadSnapshot',
       'uploadedDays',
     ])
+  })
+})
+
+describe('무엇을 올리는가', () => {
+  const remote = new Map([
+    ['2026-09-14', '2026-09-14T02:59:20.149+00:00'],
+    ['2026-09-21', '2026-09-21T09:00:07.181+00:00'],
+  ])
+
+  it('대시보드에 없는 날짜는 올립니다', () => {
+    expect(toUpload([{ file: '2026-09-28.json', scannedAt: '2026-09-28T09:00:05.000Z' }], remote)).toEqual([
+      '2026-09-28.json',
+    ])
+  })
+
+  it('같은 날 더 늦게 뜬 스냅샷은 다시 올립니다 — 아침 것이 남으면 그날 적은 진행이 안 실립니다', () => {
+    // 실측: 대시보드에 9/14 11:59 것(desk 원본 9/11), 로컬에 18:00 것(원본 9/14)
+    expect(toUpload([{ file: '2026-09-14.json', scannedAt: '2026-09-14T09:00:05.000Z' }], remote)).toEqual([
+      '2026-09-14.json',
+    ])
+  })
+
+  it('이미 올린 그 스냅샷은 다시 올리지 않습니다 (Z 와 +00:00 이 섞여 와도)', () => {
+    expect(toUpload([{ file: '2026-09-21.json', scannedAt: '2026-09-21T09:00:07.181Z' }], remote)).toEqual([])
   })
 })
