@@ -855,21 +855,20 @@ export async function fetchLatestSnapshot(): Promise<DeskSnapshotRow | null> {
 }
 
 /**
- * 그 날 **이전** 스냅샷 중 가장 늦은 것. 주간 diff 의 기준입니다.
+ * 날짜를 골라 스냅샷 여러 개를 한 번에. 주간 보고서가 **그 구간을 닫는 것**과
+ * **그 앞의 것들**을 같이 받습니다 (`week.snapshotsFor` 가 날짜를 고릅니다).
  *
- * '지난주 스냅샷' 을 정확히 요구하지 않는 이유는 스캔을 한 주 거를 수 있기
- * 때문입니다. 그때는 2주 전 것과 비교하고, 며칠자를 썼는지 보고서에 적습니다.
+ * 한때 '구간 시작 전 스냅샷 하나' 만 받아 늘 최신 스냅샷과 비교했습니다. 최신이
+ * 구간 밖이면 **기준과 최신이 같은 스냅샷**이 되어 변화가 전부 0 으로 나왔습니다.
  */
-export async function fetchSnapshotBefore(day: string): Promise<DeskSnapshotRow | null> {
-  const { data, error } = await supabase
-    .from('desk_snapshots')
-    .select('day, scanned_at, source_at, state, counts')
-    .lt('day', day)
-    .order('day', { ascending: false })
-    .limit(1)
-    .maybeSingle()
-  if (error) throw new Error(error.message)
-  return (data as DeskSnapshotRow | null) ?? null
+export async function fetchSnapshotsByDays(days: string[]): Promise<DeskSnapshotRow[]> {
+  if (days.length === 0) return []
+  return unwrap(
+    await supabase
+      .from('desk_snapshots')
+      .select('day, scanned_at, source_at, state, counts')
+      .in('day', days),
+  ) as DeskSnapshotRow[]
 }
 
 /** 태스크 맵. 행은 `id = 1` 하나뿐이고 seed 로 미리 넣혀 있습니다 */

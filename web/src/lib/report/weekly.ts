@@ -38,6 +38,7 @@ function rowProgress(work: DeskWork, done: boolean): number | null {
   return typeof work.progress === 'number' ? work.progress : null
 }
 import { mergedLabel } from './apply'
+import { briefText, listLine } from './clamp'
 import { projectRails, type ProjectRail } from './milestones'
 import { summarizeOps, type OpsSummary, type ReportTicket } from './ops'
 import { inWeek, rangeLabel, type Week } from './week'
@@ -56,8 +57,20 @@ export interface WeeklyRow {
   chip: WeeklyChip
   /** 완료 100%, 그 외는 desk `work.progress`. 없으면 null — 비웁니다 */
   progress: number | null
-  /** `8/6` · `7/13 → 8/6`(금주 변경) · `(계획)` */
+  /** `8/6` · `7/13 → 8/6`(금주 변경) · `9/18 완료` · `(계획)` */
   schedule: string
+  /**
+   * 일정 칸의 근거 날짜 — 완료면 완료일, 아니면 마감일. 묶음 행이 `9/15~9/18` 처럼
+   * 기간을 적을 때 씁니다. 표시용 문자열(`schedule`)을 다시 파싱하지 않으려고 둡니다.
+   */
+  date?: string | null
+  /**
+   * 이 행이 담고 있는 업무 수. 없으면 1 — **묶음 행**(`foldGroups`)만 2 이상입니다.
+   * 각주의 '몇 건 중 몇 건' 이 행 수가 아니라 업무 수를 세게 합니다.
+   */
+  members?: number
+  /** desk 마감일 원본. 일정 칸이 완료일을 적는 행에서도 '일정 변경' 은 마감일로 씁니다 */
+  due?: string | null
   /** 금주에 마감일이 바뀌었으면 이전 값. 3장 '일정 변경' 이 이걸 씁니다 */
   dueChangedFrom: string | null
 }
@@ -78,7 +91,13 @@ export interface WeeklyGroup {
 
 export interface WeeklyModel {
   period: { label: string; from: string; to: string; range: string }
+  /** 보고서를 만든 날 (머리글의 `보고일`) */
   reportedOn: string
+  /**
+   * 우리가 아는 마지막 시점 — 스냅샷을 뜬 날과 구간 마감 중 이른 쪽.
+   * 지연 판정의 기준입니다. 보고일과 다를 수 있습니다 (스냅샷이 밀렸을 때).
+   */
+  asOf: string
   subtitle: string
 
   /**
@@ -93,12 +112,21 @@ export interface WeeklyModel {
   /** 비교에 쓴 지난주 스냅샷 날짜. null 이면 **기준 주차**(비교 대상 없음) */
   baseline: string | null
 
+  /**
+   * 금주에 처리(완료)된 일이 없어 **비교 기준을 앞당겼으면** 그 사실. 아니면 null.
+   *
+   * 연휴가 낀 주는 완료가 0 이고, 그대로 내면 표가 '진행중' 몇 줄로 끝나 지난
+   * 성과가 어느 보고서에도 안 남습니다. 그래서 직전 주의 처리분까지 담되, 담았다는
+   * 사실과 까닭을 요약 띠에 적습니다 — 안 적으면 두 주치가 금주 실적으로 읽힙니다.
+   */
+  widened: { from: string; range: string; reason: string | null } | null
+
   summary: { done: number; started: number; ing: number; late: number; added: number }
 
   /**
-   * 표 장(章)들. **한 장에 안 들어가면 잘라내지 않고 장을 늘립니다** —
-   * 진행 현황은 이 보고서의 본문이고, 목록에 있는 것은 다 실립니다.
-   * 묶음 하나가 두 장에 걸치면 뒷장 머리행에 `continued` 가 섭니다.
+   * 표 장(章)들. 지금 설정(`build.ts`)은 **한 장**이고, 넘치면 같은 프로젝트·같은
+   * 상태끼리 묶어 한 장에 맞춥니다 (`foldGroups`). 장 수 상한을 올리면 묶고도
+   * 남은 행을 이어지는 장에 그리고, 뒷장 머리행에 `continued` 가 섭니다.
    */
   pages: WeeklyGroup[][]
   /** 3·4장을 어디에 그리는지. `spill` 이면 별도 장입니다 */
@@ -216,6 +244,9 @@ function chipOf(w: DeskWork, d: WorkDiff, asOf: string): WeeklyChip {
  * 지지난주에 바뀐 일정을 이번 주 변경으로 적으면 같은 변경이 매주 올라옵니다.
  */
 function scheduleOf(w: DeskWork, changedFrom: string | null): string {
+  // 끝난 일은 **언제 끝났는가**가 일정입니다 — desk 의 Weekly Report 도 `9/18 완료`
+  // 로 적습니다. 마감일을 적으면 직전 주 처리분을 담았을 때 언제 한 일인지 안 보입니다.
+  if (w.status === 'done' && w.completedOn) return `${shortDate(w.completedOn)} 완료`
   const now = shortDate(w.due)
   if (!now) return '(계획)'
   const before = shortDate(changedFrom)
@@ -266,20 +297,53 @@ function pick(state: DeskState, d: WorkDiff, week: Week, asOf: string, hasBaseli
  *
  * 순서는 **좁은 것부터**입니다. 업무에 적힌 글이 있으면 그게 그 업무의 사실이고,
  * 프로젝트 상황은 같은 프로젝트의 여러 업무에 똑같이 붙으므로 맨 뒤입니다.
+ * 업무의 글 중에서는 **날짜가 붙은 진행 기록(`latestLog`)이 맨 앞**입니다 — 메모는
+ * 몇 주째 같은 설명이고 기록은 그 시점의 상황입니다. 태스크 맵의 '주요 진행 내용'
+ * (`assessment` 로 들어옵니다)은 화면 안내대로 desk 에 기록이 없을 때의 대체입니다.
+ *
+ * 여기서는 줄이지 않습니다. 칸 폭에 맞추는 것은 `buildWeekly` 가 묶음 정리
+ * (`dedupeBorrowed`) 뒤에 합니다 — 먼저 줄이면 빌려 온 문구를 알아보지 못합니다.
  * 넷 다 없으면 **빈칸으로 둡니다** — 없는 글을 지어내지 않습니다 (공란의 뜻은
  * 각주가 밝힙니다).
  */
-function detailText(w: DeskWork, project: DeskProject | undefined): string {
+function detailText(w: DeskWork, project: DeskProject | undefined, asOf: string): string {
   const own =
+    latestLog(w, asOf) ||
     (w.detail?.notes ?? '').trim() ||
     (w.assessment ?? '').trim() ||
     (w.detail?.analysis ?? '').trim()
   return own || (project?.current ?? '').trim()
 }
 
+/**
+ * 업무의 **가장 최근 진행 기록** (`work.log`). 없으면 빈 문자열.
+ *
+ * 진행사항 칸의 맨 앞 자리입니다. 메모(`detail.notes`)는 업무를 만들 때 적는
+ * 설명이라 몇 주째 같은 글이고, 진행 기록은 날짜가 붙은 **그 시점의 상황**입니다
+ * — 2026-09-28 실측에서 '카보너스 통합 안정화' 의 메모는 8월부터 같은 문장이었고
+ * 9/21 기록은 `코드리뷰 진행 중` 이었습니다. 현재 진행 상태를 싣는 칸이므로
+ * 날짜가 있는 쪽이 이깁니다.
+ *
+ * `asOf` 보다 뒤 날짜는 건너뜁니다 — 스냅샷 시점에 아직 없던 일로 칩니다.
+ * 같은 날짜가 여럿이면 뒤에 적힌 것이 최신입니다 (desk 는 덧붙여 씁니다).
+ * 형식이 다른 항목은 조용히 건너뜁니다 — 필드가 문서화돼 있지 않습니다.
+ */
+export function latestLog(w: DeskWork, asOf: string): string {
+  let best: { at: string; body: string } | null = null
+  for (const e of w.log ?? []) {
+    if (!e || typeof e !== 'object') continue
+    const { at, body } = e as { at?: unknown; body?: unknown }
+    if (typeof body !== 'string' || !body.trim()) continue
+    const day = typeof at === 'string' ? at.slice(0, 10) : ''
+    if (day > asOf) continue
+    if (!best || day >= best.at) best = { at: day, body: body.trim() }
+  }
+  return best?.body ?? ''
+}
+
 /** 통합 항목이면 '구성 2/3' 을 앞에 답니다 — 진척율이 무엇을 센 값인지 밝힙니다 */
-function withMergedLabel(w: DeskWork, project: DeskProject | undefined): string {
-  const text = detailText(w, project)
+function withMergedLabel(w: DeskWork, project: DeskProject | undefined, asOf: string): string {
+  const text = detailText(w, project, asOf)
   const label = mergedLabel(w)
   if (!label) return text
   return text ? `${label} · ${text}` : label
@@ -297,10 +361,12 @@ function toRow(
     id: w.id,
     title: w.title,
     owner: (w.owner ?? '').trim() || '—',
-    detail: withMergedLabel(w, project),
+    detail: withMergedLabel(w, project, asOf),
     chip,
     progress: rowProgress(w, chip === 'done'),
     schedule: scheduleOf(w, changedFrom),
+    date: w.status === 'done' ? (w.completedOn ?? w.due) : w.due,
+    due: w.due,
     dueChangedFrom: changedFrom,
   }
 }
@@ -457,6 +523,12 @@ export function heldItems(state: DeskState): { label: string; body: string }[] {
  * **보류도 뺍니다.** 남을 기다리는 상태이지 우리가 할 일이 아니고, 이미 3장
  * 이슈로 올라가 있습니다 (`heldItems`). 계획에 적으면 하겠다는 약속이 됩니다.
  *
+ * **아직 마감이 안 온 금주 마감분도 넣습니다.** 한때 '차주 구간' 마감만 봤는데,
+ * 스냅샷이 구간 중간에 떠 있으면 `asOf` 와 차주 시작 사이가 통째로 빠졌습니다 —
+ * 2026-09-28 에 9/21 스냅샷으로 만든 보고서가 9/22~9/25 마감 9건을 두고
+ * '차주 마감인 업무 없음' 이라고 적었습니다. 그 사이의 일은 지연도 차주도 아닌
+ * 채로 사라집니다. 이제 '지연이 아닌 쪽' 은 `asOf` 부터 차주 끝까지입니다.
+ *
  * `max` 로 자르는 것은 지면 사정이고, **몇 건 중 몇 건인지는 부르는 쪽이 알아야**
  * 각주에 적을 수 있습니다. 그래서 자른 목록과 전체 건수를 같이 돌려줍니다.
  */
@@ -470,9 +542,9 @@ export function selectPlans(
   const open = state.work.filter(
     (w) => w.status !== 'done' && w.status !== 'hold' && Boolean(w.due),
   )
-  // `asOf` 는 늘 `next.from` 보다 앞이므로 두 목록은 겹치지 않습니다.
+  // 경계가 `asOf` 하나라 두 목록은 겹치지도 비지도 않습니다.
   const late = open.filter((w) => (w.due as string) < asOf).sort(byDue)
-  const upcoming = open.filter((w) => inWeek(w.due, next)).sort(byDue)
+  const upcoming = open.filter((w) => (w.due as string) >= asOf && (w.due as string) <= next.to).sort(byDue)
 
   const line = (w: DeskWork, overdue: boolean) =>
     `${w.title} (${shortDate(w.due)}${overdue ? ' 지연' : ''}${w.owner ? ` · ${w.owner}` : ''})`
@@ -509,16 +581,37 @@ function splitBudget(late: string[], upcoming: string[], max: number): string[] 
 export interface WeeklyOptions {
   week: Week
   nextWeek: Week
+  /** 보고서를 만든 날 (머리글). 없으면 `snapshotDay` */
   reportedOn: string
+  /**
+   * 스냅샷을 뜬 날 — **지연 판정의 기준**입니다. 없으면 `reportedOn`.
+   *
+   * 둘을 나눈 이유: 보고일에 스냅샷 날짜를 적었더니 9/28 에 만든 보고서가
+   * `보고일 2026-09-21` 로 나갔습니다. 반대로 지연을 보고일로 재면 스냅샷 뒤에
+   * 끝났을지 모르는 일을 늦었다고 적게 됩니다.
+   */
+  snapshotDay?: string
+  /** 비교 기준을 앞당겼으면 그 사실 (`WeeklyModel.widened`) */
+  widened?: WeeklyModel['widened']
   subtitle: string
   /** 비교에 쓴 지난주 스냅샷 날짜. 없으면 null (기준 주차) */
   baseline: string | null
   /** 정체 판정용 과거 스냅샷들 (오래된 것부터). 2개 미만이면 정체를 안 냅니다 */
   history?: DeskState[]
-  /** 표 배치. 넘치면 3·4장을 줄이거나 내려보내고, 그래도 넘치면 장을 늘립니다 */
+  /** 표 배치. 넘치면 묶고(`fold`), 설정에 따라 3·4장을 줄이거나 내려보내고, 그래도 넘치면 자릅니다 */
   table: WeeklyTableOptions
   /** 그 주 운영 현황의 원천. 대시보드를 못 읽었으면 빈 배열 */
   tickets: ReportTicket[]
+}
+
+/** 마감일 짧은 꼴. 없으면 `(계획)` — 일정 칸과 같은 말을 씁니다 */
+function dueOf(r: WeeklyRow): string {
+  return shortDate(r.due) ?? '(계획)'
+}
+
+/** 진행사항을 칸에 맞게 줄입니다 (`clamp.briefText`). 안건 이름은 떼어 냅니다 */
+function briefRow(r: WeeklyRow, col: ColumnFit): WeeklyRow {
+  return r.detail ? { ...r, detail: briefText(r.detail, r.title, col.w, col.sz, col.lines) } : r
 }
 
 export function buildWeekly(
@@ -526,9 +619,12 @@ export function buildWeekly(
   state: DeskState,
   opt: WeeklyOptions,
 ): WeeklyModel {
-  const asOf = lateAsOf(opt.week, opt.reportedOn)
+  const asOf = lateAsOf(opt.week, opt.snapshotDay ?? opt.reportedOn)
   const d = diffWork(before, state)
-  const all = groupWork(state, d, opt.week, asOf, opt.baseline !== null)
+  const grouped = groupWork(state, d, opt.week, asOf, opt.baseline !== null)
+  // 진행사항은 칸 폭을 알아야 줄일 수 있습니다. 칸 폭을 모르면(테스트 등) 원문 그대로
+  const cols = opt.table.cols
+  const all = cols ? grouped.map((g) => ({ ...g, rows: g.rows.map((r) => briefRow(r, cols.detail)) })) : grouped
 
   const totalRows = all.reduce((n, g) => n + g.rows.length, 0)
   const flat = all.flatMap((g) => g.rows)
@@ -546,7 +642,10 @@ export function buildWeekly(
   // 일정 변경은 **이번 주에 실제로 움직인 사실**이고 정체·지연은 안 움직인 사실입니다.
   const changes: { label: string; body: string }[] = []
   for (const r of flat) {
-    if (r.dueChangedFrom) changes.push({ label: r.title, body: `일정 ${r.schedule} · ${r.owner}` })
+    // 일정 칸은 완료 건이면 완료일을 적으므로 여기서는 마감일 두 개로 다시 씁니다
+    if (r.dueChangedFrom) {
+      changes.push({ label: r.title, body: `일정 ${shortDate(r.dueChangedFrom)} → ${dueOf(r)} · ${r.owner}` })
+    }
   }
   // 보류는 일정 변경 다음입니다 — 둘 다 '이번 주에 알아야 할 상태' 이고,
   // 정체·지연보다 먼저 사유를 확인해야 하는 쪽입니다.
@@ -564,7 +663,10 @@ export function buildWeekly(
   // **자리는 여기서 정해집니다.** 3·4장에 실을 것이 몇 건인지 알아야 "압축하면
   // 이슈가 지워지는가" 를 볼 수 있고, 지워진다면 압축 대신 다음 장으로 내립니다.
   const fitted = fitTable(all, opt.table, { changes: allChanges, plans: allPlans.total })
-  const shown = fitted.pages.reduce((n, page) => n + page.reduce((k, g) => k + g.rows.length, 0), 0)
+  const shown = fitted.pages.reduce(
+    (n, page) => n + page.reduce((k, g) => k + g.rows.reduce((j, r) => j + (r.members ?? 1), 0), 0),
+    0,
+  )
   // **여기서 `slice` 하지 않습니다.** 자리를 지연/차주에 나누는 것은 `selectPlans`
   // 안에서 벌어지는 일이라, 몫을 모르는 채 앞에서부터 자르면 그 배분이 통째로
   // 무의미해집니다 (자리가 넉넉할 때 앞이 전부 지연이기 때문입니다). 자리를
@@ -582,9 +684,15 @@ export function buildWeekly(
   if (!opt.baseline) {
     footnotes.push('기준 주차 — 지난주 스냅샷이 없어 변화분(완료·착수·신규·일정변경)을 산출하지 않았습니다')
   }
-  if (shown < totalRows) {
-    // 장 수 상한(TABLE_FIT.maxPages)까지 갔는데도 남은 경우에만 나옵니다
-    footnotes.push(`업무 ${totalRows}건 중 ${shown}건 표기`)
+  if (fitted.folded > 0) {
+    footnotes.push(`지면에 맞추려고 같은 프로젝트·같은 상태 ${fitted.folded}묶음을 한 행으로 합쳤습니다`)
+  }
+  if (fitted.hidden > 0) {
+    footnotes.push(`행 ${fitted.hidden}건은 프로젝트 머리행의 건수로만 표기 (진행·신규 우선 생략)`)
+  }
+  if (shown + fitted.hidden < totalRows) {
+    // 묶고 줄여도 모자라 행을 잘라 낸 경우에만 나옵니다
+    footnotes.push(`업무 ${totalRows}건 중 ${shown + fitted.hidden}건 표기`)
   } else if (fitted.pages.length > 1) {
     footnotes.push(`업무 ${totalRows}건을 표 ${fitted.pages.length}장에 나눠 실었습니다`)
   }
@@ -609,9 +717,11 @@ export function buildWeekly(
       range: rangeLabel(opt.week),
     },
     reportedOn: opt.reportedOn,
+    asOf,
     subtitle: opt.subtitle,
     deskUpdatedAt: shortDate(state.updatedAt),
     baseline: opt.baseline,
+    widened: opt.widened ?? null,
     summary,
     pages: fitted.pages,
     layout: fitted.mode,
@@ -636,12 +746,31 @@ export function buildWeekly(
  *
  * 3·4장의 줄 수(`maxChanges`·`maxPlans`)가 배치마다 다른 것은 자리가 달라지기
  * 때문입니다. 전용 장으로 내려가면 오히려 **늘어납니다** (이슈 3→9).
+ *
+ * **지금 설정은 한 장(base 하나, `maxPages: 1`)이고 `fold` 가 켜져 있습니다.**
+ * 원래 모양으로 안 들어가면 배치를 바꾸기 전에 같은 프로젝트·같은 상태끼리
+ * 묶고(`foldGroups`), 그래도 안 들어갈 때만 행을 자릅니다. 배치를 바꾸는 것은
+ * 서식 변경이고 묶는 것은 내용 정리라서, 묶기가 먼저입니다.
  */
 export type WeeklyLayout = 'base' | 'compact' | 'spill'
+
+/** 글을 줄일 칸 — 폭(인치)·글자 크기(pt)·줄 수 */
+export interface ColumnFit {
+  w: number
+  sz: number
+  lines: number
+}
 
 export interface WeeklyTableOptions {
   /** 앞에서부터 시도합니다. 마지막이 `spill` 이어야 합니다 (더 물러설 곳이 없는 배치) */
   layouts: { mode: WeeklyLayout; budget: number; maxChanges: number; maxPlans: number }[]
+  /**
+   * 넘치면 행을 자르기 전에 **같은 프로젝트·같은 상태끼리 묶습니다** (`foldGroups`).
+   * 끄면 예전처럼 자르기만 합니다.
+   */
+  fold?: boolean
+  /** 안건·진행사항 칸. 묶음 행의 이름 목록과 진행사항 글을 이 폭에 맞춥니다 */
+  cols?: { title: ColumnFit; detail: ColumnFit }
   /** 이어지는 장의 표 예산. 머리말·요약 띠가 없어 1장보다 넉넉합니다 */
   contBudget: number
   headerH: number
@@ -656,6 +785,10 @@ export interface FittedTable {
   pages: WeeklyGroup[][]
   maxChanges: number
   maxPlans: number
+  /** 한 행으로 합친 묶음 수 */
+  folded: number
+  /** 행 없이 머리행 건수로만 남긴 업무 수 */
+  hidden: number
 }
 
 const EPS = 1e-9
@@ -696,18 +829,38 @@ export function fitTable(
    * 계획이 지워진다면 압축하지 않고 다음 장으로 내립니다 — 내려보내면 둘 다
    * 지우지 않고 실을 수 있는데 표 자리 때문에 이슈를 감출 이유가 없습니다.
    */
-  const fits = (l: (typeof layouts)[number]) =>
-    need <= l.budget + EPS &&
-    (l.mode === 'base' || (demand.changes <= l.maxChanges && demand.plans <= l.maxPlans))
-  const chosen = layouts.find(fits) ?? layouts[layouts.length - 1]!
+  const allowed = (l: (typeof layouts)[number]) =>
+    l.mode === 'base' || (demand.changes <= l.maxChanges && demand.plans <= l.maxPlans)
+  const fits = (l: (typeof layouts)[number]) => need <= l.budget + EPS && allowed(l)
+  const unfolded = { folded: 0, hidden: 0 }
 
-  // 한 장에 들어가면 쪽을 나눌 것도 없습니다
-  if (need <= chosen.budget + EPS) {
-    return { mode: chosen.mode, pages: [groups], maxChanges: chosen.maxChanges, maxPlans: chosen.maxPlans }
+  // 원래 모양 그대로 들어가는 자리가 있으면 거기 둡니다
+  const plain = layouts.find(fits)
+  if (plain) {
+    return { mode: plain.mode, pages: [groups], maxChanges: plain.maxChanges, maxPlans: plain.maxPlans, ...unfolded }
   }
+
+  // **묶으면 들어가는 자리**를 앞에서부터 찾습니다. 배치를 바꾸는 것(compact·spill)보다
+  // 먼저 묶습니다 — 묶는 것은 내용 정리이고 배치를 바꾸는 것은 서식 변경입니다.
+  let folded: FoldResult | null = null
+  if (opt.fold) {
+    for (const l of layouts.filter(allowed)) {
+      const f = foldGroups(groups, l.budget, opt)
+      if (tableHeight(f.groups, opt) <= l.budget + EPS) {
+        return { mode: l.mode, pages: [f.groups], maxChanges: l.maxChanges, maxPlans: l.maxPlans, folded: f.folded, hidden: f.hidden }
+      }
+      folded = f
+    }
+  }
+
+  const chosen = layouts[layouts.length - 1]!
+  // 묶어도 안 들어가면 **묶은 것을** 자릅니다 — 덜 잃습니다
+  const rest = folded ? folded.groups : groups
   return {
     mode: chosen.mode,
-    pages: paginateGroups(groups, {
+    folded: folded?.folded ?? 0,
+    hidden: folded?.hidden ?? 0,
+    pages: paginateGroups(rest, {
       first: chosen.budget,
       cont: opt.contBudget,
       headerH: opt.headerH,
@@ -782,4 +935,186 @@ export function paginateGroups(groups: WeeklyGroup[], box: PageBox): WeeklyGroup
 function finish(pages: WeeklyGroup[][], page: WeeklyGroup[]): WeeklyGroup[][] {
   const all = page.length > 0 ? [...pages, page] : pages
   return all.length > 0 ? all : [[]]
+}
+
+// ---------------------------------------------------------------------------
+// 묶어서 맞추기
+// ---------------------------------------------------------------------------
+
+/**
+ * 표가 한 장을 넘칠 때 — **자르기 전에 묶습니다.**
+ *
+ * 예전에는 넘치면 뒤쪽 묶음을 통째로 버렸습니다. 2026-09-21 주에는 desk 에 등록된
+ * 주간 업무 16건 중 10건만 표에 남았고, 버린 6건이 어디에도 안 보였습니다 (각주는
+ * 슬라이드에 안 그립니다). 한 장이라는 서식은 지키되 **한 건도 소리 없이 빠지지
+ * 않게** 합니다.
+ *
+ * 단위는 **(프로젝트, 상태)** 입니다. 같은 프로젝트에서 같은 주에 완료된 넷은
+ * `재가입 구현, 카카오로 가입하기 구현 외 2건 · 완료 · 9/16~9/20 완료` 한 행이
+ * 됩니다. 프로젝트를 넘어 묶지는 않습니다 — 머리행이 그 프로젝트의 진척율을
+ * 달고 있어서, 다른 프로젝트의 일이 섞이면 그 숫자와 안 맞습니다.
+ *
+ * 세 단계입니다.
+ *
+ * 1. **합치기** — 덜 급한 상태부터(진행 → 신규 → 착수 → 완료 → 지연), 큰 묶음부터
+ * 2. **머리행 건수로만** — 그래도 넘치면 행을 빼고 머리행의 `지연 1 · 완료 4 · 진행 2`
+ *    로만 남깁니다. **업무 수가 적은 묶음부터** 뺍니다 — 행 하나를 비우는 값은 같고,
+ *    이름이 안 보이게 되는 업무는 적을수록 좋습니다. 같으면 덜 급한 상태부터.
+ *    지연은 빼지 않습니다. 머리행이 없는 독립 항목(프로젝트 미지정)은 건수가 남을
+ *    자리가 없어 빼지 않습니다
+ * 3. **되살리기** — 남은 자리에 뺀 묶음을 업무 수가 많은 것부터 되살리고, 그다음
+ *    합친 묶음을 중요한 상태부터(지연 → 완료 → …) 다시 폅니다. 1·2 단계는
+ *    들어갈 때까지 줄일 뿐이라 덜 줄여도 되는 것이 있습니다
+ *
+ * 2026-09-28(추석 주) 실측에서 이 순서가 아니면 **그 주에 새로 생긴 세 건**이
+ * 머리행 숫자로만 남고 직전 주 완료분이 자리를 가져갔습니다. 지금은 한 건짜리
+ * 묶음 셋이 빠지고 나머지는 다 이름이 보입니다.
+ *
+ * 태스크 맵이 먼저입니다. 사람이 묶은 항목·뺀 항목은 여기 오기 전에 이미
+ * 반영돼 있고(`applyTaskMap`), 여기는 그러고도 넘칠 때만 돕니다.
+ */
+export interface FoldResult {
+  groups: WeeklyGroup[]
+  /** 한 행으로 합친 묶음 수 */
+  folded: number
+  /** 행 없이 머리행 건수로만 남긴 업무 수 */
+  hidden: number
+}
+
+type FoldLevel = 'hidden' | 'folded' | 'rows'
+
+interface Bucket {
+  /** 묶음(프로젝트)의 순서. 앞일수록 중요합니다 — `groupWork` 가 지연 많은 순으로 세웠습니다 */
+  g: number
+  chip: WeeklyChip
+  rows: WeeklyRow[]
+  level: FoldLevel
+}
+
+const FOLD_ORDER: WeeklyChip[] = ['ing', 'new', 'started', 'done', 'late']
+const HIDE_ORDER: WeeklyChip[] = ['ing', 'new', 'started', 'done']
+/** 되살리는 순서 — 표의 행 순서(`CHIP_ORDER`)와 같습니다 */
+const KEEP_ORDER: WeeklyChip[] = ['late', 'done', 'started', 'new', 'ing']
+
+export function foldGroups(
+  groups: WeeklyGroup[],
+  budget: number,
+  box: { headerH: number; ruleH: number; rowH: number; cols?: WeeklyTableOptions['cols'] },
+): FoldResult {
+  const buckets: Bucket[] = []
+  groups.forEach((grp, g) => {
+    for (const chip of KEEP_ORDER) {
+      const rows = grp.rows.filter((r) => r.chip === chip)
+      if (rows.length > 0) buckets.push({ g, chip, rows, level: 'rows' })
+    }
+  })
+
+  const heads = groups.reduce((h, grp) => h + (grp.standalone ? box.ruleH : box.headerH), 0)
+  const size = (b: Bucket) => b.rows.reduce((n, r) => n + (r.members ?? 1), 0)
+  const rowsOf = (b: Bucket) => (b.level === 'hidden' ? 0 : b.level === 'folded' ? 1 : b.rows.length)
+  const fitsNow = () => heads + buckets.reduce((h, b) => h + rowsOf(b) * box.rowH, 0) <= budget + EPS
+
+  // 1. 합치기 — 덜 급한 상태부터, 큰 묶음부터
+  fold: for (const chip of FOLD_ORDER) {
+    const cands = buckets
+      .filter((b) => b.chip === chip && b.rows.length > 1)
+      .sort((a, b) => b.rows.length - a.rows.length || a.g - b.g)
+    for (const b of cands) {
+      if (fitsNow()) break fold
+      b.level = 'folded'
+    }
+  }
+
+  // 2. 머리행 건수로만 — 업무 수가 적은 묶음부터, 같으면 덜 급한 상태·뒤쪽 프로젝트부터.
+  //    지연·독립 항목은 남깁니다
+  const hideRank = (b: Bucket) => HIDE_ORDER.indexOf(b.chip)
+  const hideable = buckets
+    .filter((b) => hideRank(b) >= 0 && !groups[b.g]!.standalone)
+    .sort((a, b) => size(a) - size(b) || hideRank(a) - hideRank(b) || b.g - a.g)
+  for (const b of hideable) {
+    if (fitsNow()) break
+    b.level = 'hidden'
+  }
+
+  // 3. 되살리기 — 한 칸씩 올려 보고 넘치면 물립니다
+  const raise = (b: Bucket, to: FoldLevel) => {
+    const was = b.level
+    b.level = to
+    if (!fitsNow()) b.level = was
+  }
+  const keepRank = (b: Bucket) => KEEP_ORDER.indexOf(b.chip)
+  //    뺀 묶음을 업무 수가 많은 것부터 — 이름이 보이는 업무가 가장 많이 늘어나는 순서
+  for (const b of buckets
+    .filter((x) => x.level === 'hidden')
+    .sort((a, b) => size(b) - size(a) || keepRank(a) - keepRank(b) || a.g - b.g)) {
+    raise(b, 'folded')
+  }
+  //    합친 묶음을 중요한 상태부터 다시 폅니다
+  for (const b of buckets
+    .filter((x) => x.level === 'folded')
+    .sort((a, b) => keepRank(a) - keepRank(b) || a.g - b.g)) {
+    raise(b, 'rows')
+  }
+
+  let folded = 0
+  let hidden = 0
+  const out = groups.map((grp, g) => {
+    const rows: WeeklyRow[] = []
+    for (const b of buckets.filter((x) => x.g === g)) {
+      if (b.level === 'hidden') {
+        hidden += b.rows.reduce((n, r) => n + (r.members ?? 1), 0)
+      } else if (b.level === 'folded' && b.rows.length > 1) {
+        folded += 1
+        rows.push(foldRows(grp, b.chip, b.rows, box.cols))
+      } else {
+        rows.push(...b.rows)
+      }
+    }
+    return { ...grp, rows }
+  })
+  return { groups: out, folded, hidden }
+}
+
+/**
+ * 묶음 행 하나.
+ *
+ * - 안건: 이름을 들어가는 만큼 늘어놓고 나머지는 `외 N건`
+ * - 담당: 가장 많이 맡은 사람 `외 N`
+ * - 진행사항: `N건 묶음` — 행마다 다른 글을 한 칸에 담을 수 없고, 하나만 고르면
+ *   나머지 업무의 글처럼 읽힙니다. 묶였다는 사실을 적습니다
+ * - 일정: 날짜 폭 (`9/16~9/20 완료`)
+ */
+function foldRows(
+  grp: WeeklyGroup,
+  chip: WeeklyChip,
+  rows: WeeklyRow[],
+  cols: WeeklyTableOptions['cols'],
+): WeeklyRow {
+  const names = rows.map((r) => r.title)
+  const dates = [...new Set(rows.map((r) => r.date).filter((d): d is string => Boolean(d)))].sort()
+  const first = shortDate(dates[0])
+  const last = shortDate(dates[dates.length - 1])
+  const span = !first ? null : first === last ? first : `${first}~${last}`
+  return {
+    id: `fold:${grp.key}:${chip}`,
+    title: cols ? listLine(names, cols.title.w, cols.title.sz) : names.join(', '),
+    owner: leadOwner(rows.map((r) => r.owner)),
+    detail: `${rows.length}건 묶음`,
+    chip,
+    progress: chip === 'done' ? 100 : null,
+    schedule: span ? (chip === 'done' ? `${span} 완료` : span) : '(계획)',
+    date: dates[0] ?? null,
+    members: rows.reduce((n, r) => n + (r.members ?? 1), 0),
+    due: null,
+    dueChangedFrom: null,
+  }
+}
+
+/** `Ji 외 1` — 가장 많이 맡은 사람을 대표로. 담당 칸(0.62인치)에 이름을 다 늘어놓으면 넘칩니다 */
+function leadOwner(owners: string[]): string {
+  const count = new Map<string, number>()
+  for (const o of owners) if (o && o !== '—') count.set(o, (count.get(o) ?? 0) + 1)
+  if (count.size === 0) return '—'
+  const sorted = [...count.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'ko'))
+  return sorted.length === 1 ? sorted[0]![0] : `${sorted[0]![0]} 외 ${sorted.length - 1}`
 }

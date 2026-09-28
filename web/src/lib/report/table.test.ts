@@ -212,11 +212,42 @@ describe('buildWeeklyReport — 한 장을 넘기지 않습니다', () => {
     expect(out.model.layout).toBe('base')
   })
 
-  it('자른 행은 각주에 적습니다 — 조용히 자르면 40건짜리 주가 9건짜리로 보입니다', () => {
+  it('넘치면 자르기 전에 묶습니다 — 40건짜리 주가 9건짜리로 보이지 않게', () => {
     const out = buildWeeklyReport({ ...base, state: state(40) })
-    const shown = out.model.pages.reduce((n, p) => n + p.reduce((k, g) => k + g.rows.length, 0), 0)
-    expect(shown).toBeLessThan(40)
-    expect(out.model.footnotes.some((f) => /업무 \d+건 중 \d+건 표기/.test(f))).toBe(true)
+    const rows = out.model.pages.flat().flatMap((g) => g.rows)
+    expect(rows.reduce((n, r) => n + (r.members ?? 1), 0)).toBe(40)
+    expect(out.model.footnotes.some((f) => f.includes('한 행으로 합쳤습니다'))).toBe(true)
+    expect(out.model.footnotes.some((f) => /업무 \d+건 중 \d+건 표기/.test(f))).toBe(false)
+  })
+
+  it('묶어도 안 들어가면 그때 자르고 각주에 적습니다', () => {
+    // 프로젝트 20개에 지연 한 건씩 — 지연은 빼지 않고, 한 건짜리는 더 묶을 것도 없습니다
+    const s: DeskState = {
+      ...state(0),
+      work: Array.from({ length: 20 }, (_, i) =>
+        work({ id: `w${i}`, title: `업무 ${i}`, project: `p${i}`, due: '2026-08-01' }),
+      ),
+      projects: Array.from({ length: 20 }, (_, i) => ({
+        key: `p${i}`,
+        title: `프로젝트 ${i}`,
+        codename: null,
+        parent: null,
+        system: null,
+        systems: null,
+        overview: null,
+        memo: null,
+        assessment: null,
+        current: null,
+        policy: null,
+        milestones: null,
+        participants: null,
+        start: null,
+        due: null,
+      })),
+    }
+    const out = buildWeeklyReport({ ...base, state: s })
+    expect(out.model.pages).toHaveLength(1)
+    expect(out.model.footnotes.some((f) => /업무 20건 중 \d+건 표기/.test(f))).toBe(true)
   })
 })
 

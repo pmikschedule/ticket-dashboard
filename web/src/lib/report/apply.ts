@@ -146,7 +146,9 @@ function mergeMembers(entry: TaskEntry, members: DeskWork[]): ReportWork {
     types: [...new Set(members.flatMap((m) => m.types ?? []))],
     detail: null,
     assessment: entry.note?.trim() || null,
-    log: [],
+    // 구성원의 진행 기록을 모아 둡니다. 통합 항목의 진행사항은 **구성원 중 가장
+    // 최근 기록**이어야 합니다 — 비워 두면 묶는 순간 그 주의 진행이 사라집니다.
+    log: members.flatMap((m) => m.log ?? []),
     merged: {
       entryKey: entry.key,
       total: members.length,

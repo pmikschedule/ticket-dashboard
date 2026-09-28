@@ -468,12 +468,13 @@ export function useSnapshotDays() {
   return useQuery({ queryKey: keys.snapshotDays, queryFn: api.fetchSnapshotDays, staleTime: 600_000 })
 }
 
-/** 주간 diff 의 기준 스냅샷. 구간 시작일이 정해져야 부를 수 있습니다 */
-export function useSnapshotBefore(day: string | null) {
+/** 주간 보고서가 쓰는 스냅샷들 (그 구간을 닫는 것 · 기준 · 더 앞선 것). 날짜가 정해져야 부릅니다 */
+export function useSnapshots(days: string[]) {
+  const sorted = [...days].sort()
   return useQuery({
-    queryKey: ['desk-snapshot-before', day],
-    queryFn: () => api.fetchSnapshotBefore(day!),
-    enabled: Boolean(day),
+    queryKey: ['desk-snapshots', ...sorted],
+    queryFn: () => api.fetchSnapshotsByDays(sorted),
+    enabled: sorted.length > 0,
     staleTime: 600_000,
   })
 }

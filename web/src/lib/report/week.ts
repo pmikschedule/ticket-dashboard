@@ -160,6 +160,63 @@ export function weekForSnapshot(snapshotDay: string, today: string): WeekTarget 
   return { target, buildable, fresh, behindWeeks: Math.max(0, behind) }
 }
 
+/** `YYYY-MM-DD` 에 n 일을 더합니다 (음수면 뺍니다) */
+export function addDays(iso: string, n: number): string {
+  return toIso(toUtc(iso) + n * DAY)
+}
+
+/**
+ * 그 구간에 걸친 desk 휴일 — `추석 연휴(9/24~9/25)`. 없으면 빈 문자열.
+ *
+ * 금주 처리가 없을 때 **까닭**을 적는 데만 씁니다. 휴일이 없어도 처리 없는 주는
+ * 있고, 그때는 까닭을 지어내지 않습니다.
+ */
+export function holidaysIn(holidays: { date: string; until?: string | null; name: string }[], w: Week): string {
+  const short = (iso: string) => `${Number(iso.slice(5, 7))}/${Number(iso.slice(8, 10))}`
+  return holidays
+    .filter((h) => h.date && h.date.slice(0, 10) <= w.to && (h.until ?? h.date).slice(0, 10) >= w.from)
+    .map((h) => {
+      const end = (h.until ?? h.date).slice(0, 10)
+      const start = h.date.slice(0, 10)
+      return `${h.name}(${start === end ? short(start) : `${short(start)}~${short(end)}`})`
+    })
+    .join(', ')
+}
+
+/**
+ * 한 구간의 보고서를 **어느 스냅샷으로** 만드는가 — 순수 함수.
+ *
+ * - `current` 그 구간을 닫는 스냅샷 = 구간 안에서 가장 늦게 뜬 것. 구간 안에 하나도
+ *   없으면 null — 그 구간은 만들 수 없습니다 (앞 구간의 스냅샷으로 만들면 **자기와
+ *   비교**하게 됩니다. 2026-09-28 에 9/22~9/28 을 9/21 스냅샷으로 만들었더니 기준도
+ *   9/21 이라 완료·착수·신규가 전부 0 이었습니다)
+ * - `base`    구간 시작 전에 뜬 가장 늦은 것. 없으면 null (기준 주차)
+ * - `earlier` base 보다 한 주씩 앞선 것들 — 금주 처리 없을 때 기준을 앞당기는 데 씁니다.
+ *   같은 스냅샷이 두 번 나오지 않습니다 (스캔을 거른 주가 있으면 짧아집니다)
+ *
+ * 지난 구간을 고르면 `current` 도 그 구간 것입니다. 한때 늘 최신 스냅샷을 썼는데,
+ * 그러면 8/31 구간 보고서에 9월에 끝난 일이 '금주 완료' 로 실립니다.
+ */
+export function snapshotsFor(
+  days: string[],
+  w: Week,
+  extraWeeks = 2,
+): { current: string | null; base: string | null; earlier: string[] } {
+  const sorted = [...new Set(days.map((d) => d.slice(0, 10)))].sort()
+  const lastBefore = (limit: string) => [...sorted].reverse().find((d) => d < limit) ?? null
+  const current = [...sorted].reverse().find((d) => d >= w.from && d <= w.to) ?? null
+  const base = lastBefore(w.from)
+  const earlier: string[] = []
+  let limit = w.from
+  for (let i = 0; i < extraWeeks; i += 1) {
+    limit = addDays(limit, -7)
+    const d = lastBefore(limit)
+    if (!d || d === base || earlier.includes(d)) continue
+    earlier.push(d)
+  }
+  return { current, base, earlier }
+}
+
 /** 그 날짜가 이 구간에 속하는지. 문자열 비교라 타임존에 안 흔들립니다 */
 export function inWeek(iso: string | null | undefined, w: Week): boolean {
   if (!iso) return false

@@ -79,9 +79,14 @@ function renderSummary(s: Slide, m: WeeklyModel) {
   round(s, b.x, b.y, b.w, b.h, C.BAND)
 
   const { done, started, ing, late, added } = m.summary
-  const body = m.baseline
-    ? `금주 완료 ${done} · 착수 ${started} · 신규 ${added} · 진행 ${ing} · 지연 ${late}          `
-    : `진행 ${ing} · 지연 ${late} · 완료(금주) ${done}          `
+  // 비교 기준을 앞당겼으면(금주 처리 없음) **숫자 앞에 그 사실을** 둡니다. 뒤에 두면
+  // `금주 완료 9` 까지 읽고 멈춘 사람에게는 두 주치가 금주 실적으로 남습니다.
+  const counts = `완료 ${done} · 착수 ${started} · 신규 ${added} · 진행 ${ing} · 지연 ${late}          `
+  const body = m.widened
+    ? `금주 완료 없음 → ${m.widened.range} 기준 ${counts}`
+    : m.baseline
+      ? `금주 ${counts}`
+      : `진행 ${ing} · 지연 ${late} · 완료(금주) ${done}          `
 
   text(
     s,
@@ -93,7 +98,9 @@ function renderSummary(s: Slide, m: WeeklyModel) {
       { text: body, options: { color: C.INK } },
       { text: '기준  ', options: { bold: true, color: C.NAVY } },
       {
-        text: m.baseline ? `지난주 스냅샷 ${m.baseline} 대비` : '기준 주차 — 비교 대상 없음',
+        text: m.baseline
+          ? `${m.widened ? '' : '지난주 '}스냅샷 ${m.baseline} 대비${m.widened?.reason ? ` · ${m.widened.reason}` : ''}`
+          : '기준 주차 — 비교 대상 없음',
         options: { color: m.baseline ? C.INK : C.RED },
       },
     ],
@@ -324,15 +331,18 @@ function renderRow(s: Slide, row: WeeklyRow, y: number, zebra: boolean, standalo
     }
   }
 
-  // 일정이 금주에 바뀌었으면 화살표가 들어간 문자열이라 조금 진하게 씁니다
+  // 일정이 금주에 바뀌었으면 화살표가 들어간 문자열이라 조금 진하게 씁니다.
+  // 완료 행은 마감이 바뀌었어도 일정 칸에 **완료일**을 적으므로 칠하지 않습니다 —
+  // `9/2 완료` 가 황토색이면 완료일이 밀린 것처럼 읽힙니다
+  const changed = Boolean(row.dueChangedFrom) && row.schedule.includes('→')
   text(s, row.schedule, {
     x: TABLE.cols.schedule.x,
     y,
     w: TABLE.cols.schedule.w,
     h: rowH,
     sz: TABLE.cols.schedule.sz,
-    color: row.dueChangedFrom ? C.AMBER : C.INK,
-    bold: Boolean(row.dueChangedFrom),
+    color: changed ? C.AMBER : C.INK,
+    bold: changed,
     align: 'center',
   })
 }
@@ -586,7 +596,8 @@ function renderRailSlide(s: Slide, m: WeeklyModel): void {
   shown.forEach((r, i) => {
     const y = RAIL.top + i * rowH
     if (i % 2 === 1) rect(s, RAIL.name.x, y, SLIDE.w - RAIL.name.x * 2, rowH, C.ZEBRA)
-    if (renderRailRow(s, r, y, rowH, m.reportedOn)) collapsedRows += 1
+    // 목표일 지연은 보고일이 아니라 **우리가 아는 시점**으로 잽니다 (1장 표와 같은 기준)
+    if (renderRailRow(s, r, y, rowH, m.asOf)) collapsedRows += 1
   })
 
   if (collapsedRows > 0) {

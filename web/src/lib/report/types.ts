@@ -40,6 +40,13 @@ export interface DeskWork {
   detail: DeskWorkDetail | null
   /** 38건 전부 null 이었습니다 */
   assessment: string | null
+  /**
+   * 업무별 **진행 기록** — `{ at: 'YYYY-MM-DD', body }` 가 날짜순으로 쌓입니다.
+   *
+   * 8/11 실측에는 전부 비어 있어 `unknown[]` 로 두었는데, 2026-09-28 실측 88건 중
+   * 14건에 기록이 있습니다 (`코드리뷰 진행 중 (Sloan)` 처럼 **그 주의 진행 상황**).
+   * 형식이 보장되지 않으므로 타입은 그대로 두고 읽는 쪽(`latestLog`)이 걸러 냅니다.
+   */
   log: unknown[]
 }
 
@@ -80,6 +87,13 @@ export interface DeskDecision {
   work: string | null
 }
 
+/** desk 의 휴일 — `until` 이 없으면 하루짜리입니다 */
+export interface DeskHoliday {
+  date: string
+  until?: string | null
+  name: string
+}
+
 export interface DeskState {
   updatedAt: string | null
   work: DeskWork[]
@@ -87,6 +101,11 @@ export interface DeskState {
   decisions: DeskDecision[]
   systems: unknown[]
   people: unknown[]
+  /**
+   * 2026-09 부터 생긴 필드. 주간보고가 '금주 처리 없음' 의 까닭(추석 연휴 등)을
+   * 밝힐 때 씁니다. 없던 시절 스냅샷이 있으므로 optional 입니다.
+   */
+  holidays?: DeskHoliday[]
 }
 
 /** 수집 메타를 덧붙인 스냅샷. 원본 state 는 **가공 없이** 보존합니다. */

@@ -5,7 +5,8 @@ import {
   useLatestSnapshot,
   useReportTickets,
   useSaveTaskMap,
-  useSnapshotBefore,
+  useSnapshotDays,
+  useSnapshots,
   useTaskMap,
 } from '../hooks/queries'
 import { buildWeeklyReport } from '../lib/report/build'
@@ -15,6 +16,7 @@ import {
   parseWeekLabel,
   previousWeek,
   rangeLabel,
+  snapshotsFor,
   todayIso,
   weekForSnapshot,
 } from '../lib/report/week'
@@ -55,6 +57,7 @@ import { formatDate } from '../lib/format'
 export default function TaskMapPage() {
   const { user, isAdmin } = useAuth()
   const snapshot = useLatestSnapshot()
+  const snapshotDays = useSnapshotDays()
   const taskMap = useTaskMap()
   const save = useSaveTaskMap()
 
@@ -87,11 +90,22 @@ export default function TaskMapPage() {
   // 골라 둔 구간. null 이면 기본값(오늘이 속한 구간)입니다 — 대개 그대로 씁니다
   const [weekPick, setWeekPick] = useState<string | null>(null)
   const week = weeks ? (weekPick ? (parseWeekLabel(weekPick) ?? weeks.buildable) : weeks.buildable) : null
-  // 앞으로는 오늘이 속한 구간까지만. 그 너머는 아직 아무 일도 안 일어난 주라
-  // 빈 보고서가 나오고, 빈 보고서는 잘못 고른 것보다 알아채기 어렵습니다.
-  const canForward = Boolean(weeks && week && week.id < weeks.target.id)
+  // 앞으로는 **스냅샷이 있는 구간까지만.** 그 너머는 그 구간을 닫을 스냅샷이 없어
+  // 앞 구간의 스냅샷을 자기 자신과 비교하게 됩니다 — 2026-09-28 에 그렇게 만든
+  // 보고서가 '금주 완료 0 · 착수 0 · 신규 0' 이었습니다. 스냅샷이 밀렸다는 사실은
+  // 아래 배너가 말합니다.
+  const canForward = Boolean(weeks && week && week.id < weeks.buildable.id)
   const weekShifted = Boolean(weekPick) && week?.id !== weeks?.buildable.id
-  const base = useSnapshotBefore(week?.from ?? null)
+  // 그 구간을 닫는 스냅샷 · 기준 · 더 앞선 것 (금주 처리 없을 때 기준을 앞당깁니다).
+  // 최신 스냅샷은 이미 받아 뒀으므로 다시 받지 않습니다.
+  const plan = week
+    ? snapshotsFor([...(snapshotDays.data ?? []).map((d) => d.day), ...(snapshot.data ? [snapshot.data.day] : [])], week)
+    : null
+  const wanted = plan ? [plan.current, plan.base, ...plan.earlier].filter((d): d is string => Boolean(d)) : []
+  const others = useSnapshots(wanted.filter((d) => d !== snapshot.data?.day))
+  const byDay = new Map(
+    [...(snapshot.data ? [snapshot.data] : []), ...(others.data ?? [])].map((r) => [r.day, r]),
+  )
   // 2장 운영 현황의 원천. 못 읽어도 보고서는 나와야 하므로 빈 배열로 넘깁니다
   const tickets = useReportTickets()
   const unmapped = (state?.work.length ?? 0) - claimedIds(entries).size
@@ -129,15 +143,25 @@ export default function TaskMapPage() {
    * 저장하지 않은 편집도 그대로 반영합니다 — 미리 보고 고칠 수 있어야 합니다.
    */
   async function onBuild() {
-    if (!state || !snapshot.data || !week) return
+    if (!week || !plan) return
     setBuilding(true)
     setBuildError(null)
     try {
+      const current = plan.current ? byDay.get(plan.current) : undefined
+      if (!current) throw new Error(`${rangeLabel(week)} 구간 안에 뜬 desk 스냅샷이 없습니다`)
+      const base = plan.base ? byDay.get(plan.base) : undefined
+      // 기준을 못 받았는데 그대로 만들면 '기준 주차 — 비교 대상 없음' 으로 조용히 나갑니다
+      if (plan.base && !base) throw new Error(`기준 스냅샷(${plan.base})을 불러오지 못했습니다. 새로고침 후 다시 시도하세요`)
       const out = buildWeeklyReport({
-        state,
-        day: snapshot.data.day,
-        base: (base.data?.state ?? null) as DeskState | null,
-        baseDay: base.data?.day ?? null,
+        state: current.state as DeskState,
+        day: current.day,
+        base: (base?.state ?? null) as DeskState | null,
+        baseDay: base?.day ?? null,
+        earlier: plan.earlier.flatMap((d) => {
+          const r = byDay.get(d)
+          return r ? [{ day: r.day, state: r.state as DeskState }] : []
+        }),
+        reportedOn: todayIso(),
         entries,
         tickets: tickets.data ?? [],
         weekId: week.id,
@@ -217,20 +241,24 @@ export default function TaskMapPage() {
               disabled={!canForward}
               onClick={() => setWeekPick(nextWeek(week).id)}
               className="rounded-lg border border-slate-300 px-2 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-30"
-              title={canForward ? '한 주 뒤 구간' : '오늘이 속한 구간까지만 만듭니다'}
+              title={canForward ? '한 주 뒤 구간' : '스냅샷이 있는 구간까지만 만듭니다'}
             >
               ›
             </button>
             <button
               type="button"
-              disabled={building || base.isLoading || tickets.isLoading}
+              disabled={building || !plan?.current || snapshotDays.isLoading || others.isLoading || tickets.isLoading}
               onClick={() => void onBuild()}
               className={`ml-1 rounded-lg border px-3 py-1.5 text-sm disabled:opacity-40 ${
                 weeks?.fresh
                   ? 'border-slate-300 hover:bg-slate-50'
                   : 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
               }`}
-              title={`${rangeLabel(week)} 구간으로 만듭니다`}
+              title={
+                plan?.current
+                  ? `${rangeLabel(week)} 구간으로 만듭니다`
+                  : `${rangeLabel(week)} 구간 안에 뜬 스냅샷이 없어 만들 수 없습니다`
+              }
             >
               {building ? '만드는 중…' : '주간보고서 생성'}
             </button>
@@ -265,6 +293,13 @@ export default function TaskMapPage() {
           수집 PC 에서 <code className="rounded bg-white px-1">cd reporter &amp;&amp; npm run scan</code>{' '}
           을 돌린 뒤 이 화면을 새로고침하면 현재 작업 기준으로 만들어집니다. desk 인증이 그 PC 의
           브라우저 쿠키라 수집이 거기를 벗어날 수 없습니다.
+        </div>
+      )}
+
+      {week && plan && !plan.current && !snapshotDays.isLoading && (
+        <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-700 ring-1 ring-slate-200">
+          <b>{rangeLabel(week)}</b> 구간 안에 뜬 desk 스냅샷이 없어 이 구간은 만들 수 없습니다. 그 주에
+          수집이 멈춰 있었습니다 — desk 는 지난 시점을 돌려주지 않아 복원되지 않습니다.
         </div>
       )}
 
