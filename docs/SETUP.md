@@ -555,7 +555,49 @@ gh run watch
 
 ---
 
-## 12. 운영
+## 12. 주간보고서 자동 갱신 — desk 수집 요청
+
+태스크맵 화면의 **주간보고서 생성**은 먼저 desk 최신 현황을 받아 옵니다. 브라우저는
+desk 를 못 읽으므로(쿠키가 수집 Mac 의 Chrome 에만 있습니다) 요청을 DB 에 넣고, 수집
+Mac 의 감시 작업이 처리합니다 (설계는 [DESIGN.md](DESIGN.md) 13장). 두 가지가 있어야 합니다.
+
+### 12-1. 스키마 (25장)
+
+SQL Editor 에서 [`supabase/schema.sql`](../supabase/schema.sql) **전체를 다시 실행**합니다
+(재실행 안전). 25장이 `desk_scan_requests` 표·RLS·`desk_scan_waiting` 함수를 만듭니다.
+
+```sql
+select tablename from pg_tables where schemaname = 'public' and tablename = 'desk_scan_requests';
+select proname from pg_proc where proname = 'desk_scan_waiting';
+-- 둘 다 나와야 합니다
+```
+
+없으면 화면은 깨지지 않고 "수집 요청 표가 아직 DB 에 없습니다" 를 띄운 뒤,
+'기존 수집본(MM/DD)으로 생성' 을 눌러야 만듭니다.
+
+### 12-2. 수집 Mac 의 감시 작업
+
+```bash
+cd ~/PMS/reporter
+cp scripts/me.saebom.reporter.requests.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.requests.plist
+launchctl print gui/$UID/me.saebom.reporter.requests | grep -E 'state|last exit'
+```
+
+30초마다 `npm run requests` 를 부릅니다. 할 일이 없으면 로그인 없이 쿼리 한 번으로
+끝나고 아무것도 안 찍습니다. 처리 기록은 `reporter/data/requests.log`.
+정기 스캔(`me.saebom.reporter`)은 그대로 둡니다. `npm run doctor` 가 표와 감시 작업을
+함께 봅니다.
+
+| 증상 | 원인 |
+|---|---|
+| 화면이 2분 기다리다 "수집 PC 가 요청을 받지 않았습니다" | 수집 Mac 이 잠들었거나 꺼져 있거나 감시 작업 미등록 |
+| "쿠키가 … 만료됐습니다" | 수집 Mac 의 Chrome 으로 desk 에 다시 로그인 |
+| `requests.log` 에 "수집 요청 표가 DB 에 없습니다" (한 시간에 한 번) | 12-1 미적용 |
+
+---
+
+## 13. 운영
 
 **비밀번호 재설정** — Authentication → Users → 해당 사용자 → Reset password.
 

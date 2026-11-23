@@ -223,3 +223,22 @@ export function inWeek(iso: string | null | undefined, w: Week): boolean {
   const day = iso.slice(0, 10)
   return day >= w.from && day <= w.to
 }
+
+/**
+ * 화면과 생성 버튼이 **같은 규칙으로** 구간과 스냅샷을 고릅니다 — 순수 함수.
+ *
+ * 화면은 그릴 때, 버튼은 최신 수집을 받은 **뒤에** 다시 계산합니다. 둘이 따로
+ * 계산하면 받기 전 숫자로 만들거나 화면과 다른 구간이 나옵니다.
+ * `pick` 이 null 이면 기본 구간(`weekForSnapshot` 의 buildable)입니다.
+ */
+export function resolveWeek(
+  latestDay: string,
+  days: string[],
+  pick: string | null,
+  today: string,
+): { weeks: WeekTarget; week: Week; plan: ReturnType<typeof snapshotsFor> } {
+  const weeks = weekForSnapshot(latestDay, today)
+  const week = pick ? (parseWeekLabel(pick) ?? weeks.buildable) : weeks.buildable
+  const plan = snapshotsFor([...days, latestDay], week)
+  return { weeks, week, plan }
+}

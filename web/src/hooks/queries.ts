@@ -1,8 +1,17 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryOptions, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useMemo } from 'react'
 
 import * as api from '../lib/api'
 import type { Resolution, ScanOutcome } from '../lib/constants'
-import type { ScannedMail, TicketFilters, TicketMeta } from '../lib/types'
+import {
+  SCAN_POLL_MS,
+  judgePoll,
+  planScan,
+  pollAttempts,
+  progressText,
+  type PollVerdict,
+} from '../lib/deskScan'
+import type { ScanRequestRow, ScannedMail, TicketFilters, TicketMeta } from '../lib/types'
 
 export const keys = {
   tickets: (filters: TicketFilters) => ['tickets', filters] as const,
@@ -454,29 +463,139 @@ export function useUpdateUserRole() {
 // ---------------------------------------------------------------------------
 
 /**
- * 스냅샷은 수백 KB 라 자주 다시 받지 않습니다. 어차피 주 2회만 바뀝니다.
+ * 스냅샷은 수백 KB 라 자주 다시 받지 않습니다. 정기 스캔은 주 2회이고, 보고서를
+ * 만들 때 받은 수집은 그 자리에서 캐시를 새로 채웁니다 (`useDeskScan`).
+ *
+ * 화면의 훅과 보고서 생성(`useSnapshotLoader`)이 **같은 키**를 쓰도록 옵션을
+ * 한곳에 둡니다. 키가 갈라지면 받은 최신 스냅샷이 화면에 안 보이거나 그 반대가 됩니다.
  */
-export function useLatestSnapshot() {
-  return useQuery({
-    queryKey: keys.snapshot,
-    queryFn: api.fetchLatestSnapshot,
-    staleTime: 600_000,
+const SNAPSHOT_STALE_MS = 600_000
+
+export function snapshotQuery() {
+  return queryOptions({ queryKey: keys.snapshot, queryFn: api.fetchLatestSnapshot, staleTime: SNAPSHOT_STALE_MS })
+}
+
+export function snapshotDaysQuery() {
+  return queryOptions({ queryKey: keys.snapshotDays, queryFn: api.fetchSnapshotDays, staleTime: SNAPSHOT_STALE_MS })
+}
+
+export function snapshotsQuery(days: string[]) {
+  const sorted = [...days].sort()
+  return queryOptions({
+    queryKey: ['desk-snapshots', ...sorted],
+    queryFn: () => api.fetchSnapshotsByDays(sorted),
+    enabled: sorted.length > 0,
+    staleTime: SNAPSHOT_STALE_MS,
   })
 }
 
+export function useLatestSnapshot() {
+  return useQuery(snapshotQuery())
+}
+
 export function useSnapshotDays() {
-  return useQuery({ queryKey: keys.snapshotDays, queryFn: api.fetchSnapshotDays, staleTime: 600_000 })
+  return useQuery(snapshotDaysQuery())
 }
 
 /** 주간 보고서가 쓰는 스냅샷들 (그 구간을 닫는 것 · 기준 · 더 앞선 것). 날짜가 정해져야 부릅니다 */
 export function useSnapshots(days: string[]) {
-  const sorted = [...days].sort()
-  return useQuery({
-    queryKey: ['desk-snapshots', ...sorted],
-    queryFn: () => api.fetchSnapshotsByDays(sorted),
-    enabled: sorted.length > 0,
-    staleTime: 600_000,
-  })
+  return useQuery(snapshotsQuery(days))
+}
+
+/**
+ * 보고서를 만드는 순간에 스냅샷을 받습니다 — 화면의 훅과 같은 캐시를 거칩니다.
+ * `fresh` 면 캐시를 믿지 않고 다시 받습니다 (방금 수집한 뒤).
+ */
+export function useSnapshotLoader() {
+  const queryClient = useQueryClient()
+  return useMemo(
+    () => ({
+      latest: (fresh: boolean) =>
+        queryClient.fetchQuery({ ...snapshotQuery(), staleTime: fresh ? 0 : SNAPSHOT_STALE_MS }),
+      days: (fresh: boolean) =>
+        queryClient.fetchQuery({ ...snapshotDaysQuery(), staleTime: fresh ? 0 : SNAPSHOT_STALE_MS }),
+      byDays: (days: string[]) => queryClient.fetchQuery(snapshotsQuery(days)),
+    }),
+    [queryClient],
+  )
+}
+
+export type DeskScanResult =
+  | { ok: true; day: string | null; reused: boolean }
+  | { ok: false; reason: string; missingTable: boolean }
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/**
+ * desk 최신 현황을 받아 옵니다 — 요청을 넣고(또는 있는 것을 같이) 끝나길 기다립니다.
+ *
+ * 판단은 전부 `lib/deskScan.ts` 의 순수 함수입니다. 여기는 그 판단대로 읽고 쓰고
+ * 기다리기만 합니다. 기다림은 **횟수로 묶었습니다** (`pollAttempts`, 약 3초 × 2분).
+ *
+ * 성공하면 스냅샷 캐시를 비웁니다 — 화면의 '스냅샷 MM/DD' 표시와 경고 띠도 함께
+ * 최신으로 바뀝니다. 실패는 던지지 않고 이유를 돌려줍니다. 옛 수집본으로 만들지는
+ * 부르는 쪽(사람)이 정합니다.
+ */
+export function useDeskScan() {
+  const queryClient = useQueryClient()
+  return useCallback(
+    async (opt: {
+      userId: string
+      onProgress: (text: string) => void
+      alive: () => boolean
+    }): Promise<DeskScanResult> => {
+      const refresh = async () => {
+        await Promise.all([
+          queryClient.invalidateQueries({ queryKey: keys.snapshot }),
+          queryClient.invalidateQueries({ queryKey: keys.snapshotDays }),
+          queryClient.invalidateQueries({ queryKey: ['desk-snapshots'] }),
+        ])
+      }
+      const settle = async (v: PollVerdict): Promise<DeskScanResult | null> => {
+        if (v.kind === 'done') {
+          await refresh()
+          return { ok: true, day: v.day, reused: false }
+        }
+        if (v.kind === 'failed' || v.kind === 'timeout') return { ok: false, reason: v.reason, missingTable: false }
+        return null
+      }
+
+      try {
+        opt.onProgress('desk 최신 현황 수집 요청 중…')
+        const plan = planScan(await api.fetchRecentScanRequests(), Date.now())
+        if (plan.kind === 'reuse') {
+          await refresh()
+          return { ok: true, day: plan.request.snapshot_day, reused: true }
+        }
+        const request = plan.kind === 'wait' ? plan.request : await api.requestDeskScan(opt.userId)
+
+        let row: ScanRequestRow | null = request
+        const started = Date.now()
+        for (let i = 0; i < pollAttempts(); i += 1) {
+          const v = judgePoll(row, Date.now() - started)
+          const end = await settle(v)
+          if (end) return end
+          if (v.kind === 'waiting') opt.onProgress(progressText(v))
+          await sleep(SCAN_POLL_MS)
+          if (!opt.alive()) return { ok: false, reason: '화면을 벗어나 기다리기를 멈췄습니다', missingTable: false }
+          row = await api.fetchScanRequest(request.id)
+        }
+        // 횟수를 다 썼으면 상한을 넘긴 것입니다
+        return (await settle(judgePoll(row, Number.POSITIVE_INFINITY))) ?? {
+          ok: false,
+          reason: '수집을 기다리다 상한에 걸렸습니다',
+          missingTable: false,
+        }
+      } catch (e) {
+        return {
+          ok: false,
+          reason: e instanceof Error ? e.message : String(e),
+          missingTable: e instanceof api.ScanQueueMissingError,
+        }
+      }
+    },
+    [queryClient],
+  )
 }
 
 /** 주간 보고서 2장(운영 현황). 전 구간을 받아 전주 대비까지 냅니다 */

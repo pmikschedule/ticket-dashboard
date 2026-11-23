@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  감시 작업 — 화면에서 들어온 desk 수집 요청을 30초마다 확인합니다.
+
+  이슈트래커의 '주간보고서 생성' 버튼은 먼저 desk_scan_requests 에 요청을 넣고
+  끝나길 기다립니다 (schema.sql 25장). 브라우저는 스캔을 못 돌립니다 — desk
+  인증이 이 Mac 의 Chrome 쿠키라서요. 이 작업이 요청을 집어 `npm run scan` 과
+  같은 경로로 스캔·업로드하고 결과를 적습니다. 화면은 2분까지 기다립니다.
+
+  정기 스캔(me.saebom.reporter, 월 18:00 · 화 09:00)은 그대로 둡니다. 둘은 별개
+  작업이고, 같은 날 두 번 스캔하면 늦게 뜬 것이 대시보드에 남습니다.
+
+  할 일이 없으면 로그인 없이 쿼리 한 번으로 끝나고 아무것도 안 찍습니다.
+  로그는 처리했을 때만 data/requests.log 에 남습니다.
+
+  ⚠️ 저장소를 `~/Documents` 밑에 두지 마세요 (me.saebom.reporter.plist 와 같은 이유).
+  ⚠️ 키체인 접근이 필요하므로 로그인한 사용자 세션의 LaunchAgent 여야 합니다.
+  ⚠️ PATH 는 여기서 줍니다. 셸 초기화 파일을 안 읽기 때문입니다 (scripts/requests.sh).
+     node 를 다른 곳에 설치했으면 PATH 를 고치세요.
+
+  등록:   cp scripts/me.saebom.reporter.requests.plist ~/Library/LaunchAgents/
+          launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.requests.plist
+  해제:   launchctl bootout gui/$UID/me.saebom.reporter.requests
+  확인:   launchctl print gui/$UID/me.saebom.reporter.requests | grep -E 'state|last exit'
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>me.saebom.reporter.requests</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/milliontube/PMS/reporter/scripts/requests.sh</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/Users/milliontube/PMS/reporter</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+
+  <!-- 30초마다. 앞선 실행이 아직 돌고 있으면 launchd 가 겹쳐 띄우지 않습니다 -->
+  <key>StartInterval</key>
+  <integer>30</integer>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- 백그라운드 작업으로 낮은 우선순위에서 돕니다 -->
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/milliontube/PMS/reporter/data/requests.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/milliontube/PMS/reporter/data/requests.log</string>
+</dict>
+</plist>

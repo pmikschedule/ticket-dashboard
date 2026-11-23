@@ -39,10 +39,11 @@ Node 22 이상이 필요합니다 (`node:sqlite` 를 씁니다).
 npm run doctor            # 설정·연결·쿠키 만료 + **스냅샷 나이** 점검
 npm run scan              # desk 를 읽어 스냅샷 저장 + 대시보드 업로드
 npm run push              # 밀린 스냅샷만 올리기
+npm run requests          # 화면에서 들어온 수집 요청 처리 (감시 작업이 30초마다)
 npm run monthly           # 지난달 보고서 생성
 npm run monthly 2026-08   # 특정 달
 npm run list              # 업무 전수 목록 xlsx (프로젝트별 · 담당자별)
-npm test                  # 집계·레이아웃 173개 + 타입체크
+npm test                  # 집계·레이아웃 195개 + 타입체크
 ```
 
 터미널을 안 쓸 때는 **`start-reporter.command` 를 더블클릭**합니다. Node 버전과
@@ -60,6 +61,28 @@ launchctl kickstart -p gui/$UID/me.saebom.reporter   # 즉시 한 번
 
 월 18:00 · 화 09:00 스캔, 매월 1일 09:30 월간보고. 주간 구간이 화~월이라
 월요일이 끝나야 그 주가 닫히고, 그래서 두 번 뜹니다. 로그는 `data/reporter.log`.
+
+### 화면의 수집 요청 — 감시 작업 (30초마다)
+
+이슈트래커의 **주간보고서 생성**은 만들기 전에 desk 최신 현황을 받아 옵니다. 브라우저는
+desk 를 못 읽으므로 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장), 이 Mac 의 감시
+작업이 집어 가 **`npm run scan` 과 같은 함수**(`cli.ts` 의 `scanOnce`)로 스캔·업로드한
+뒤 결과를 적습니다. 화면은 최대 2분 기다립니다.
+
+```bash
+cp scripts/me.saebom.reporter.requests.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.requests.plist
+```
+
+- 할 일이 없으면 **로그인 없이** 건수만 묻고(`desk_scan_waiting`) 아무것도 안 찍습니다.
+  30초마다 로그인하면 하루 2,880개의 auth 세션이 쌓입니다
+- 밀린 요청이 여럿이면 **한 번의 스캔**으로 함께 처리합니다
+- 스캔 상한 3분. 10분 넘게 `running` 인 요청은 다음 감시가 `failed` 로 닫습니다
+- 성공은 **대시보드에 올라갔을 때만**입니다. `scan` 과 다릅니다 — 화면은 대시보드의
+  스냅샷만 보므로, 로컬에만 남은 스냅샷은 화면에게는 없는 것과 같습니다
+- 실패 이유는 팀원 전원이 읽습니다. 토큰처럼 생긴 것은 지우고 적습니다 (`requests.ts`)
+- 표가 없거나 오프라인이면 같은 경고를 **한 시간에 한 번만** `data/requests.log` 에 적습니다
+- 셸 초기화 파일을 안 읽고(`zsh -f`) npx 를 거치지 않습니다. PATH 는 plist 가 줍니다
 
 **저장소를 `~/Documents` 밑에 두지 마세요.** macOS 가 launchd 로 뜬 프로세스의
 Documents 접근을 막아(TCC) `getcwd: Operation not permitted` 로 죽습니다. 로그
@@ -316,8 +339,9 @@ src/xlsx.ts        xlsx 그리기 — 계산하지 않습니다
 src/cookie.ts      Chrome 쿠키 추출·복호화
 src/desk.ts        /api/state 수집·스냅샷
 src/dashboard.ts   Supabase 티켓 조회 (대분류 3종) · 태스크 맵 조회
-src/upload.ts      스냅샷 업로드 — 이 도구가 대시보드에 쓰는 유일한 곳
-src/cli.ts         scan · push · monthly · list · doctor
+src/upload.ts      스냅샷 업로드
+src/requests.ts    화면의 수집 요청 큐 읽기·쓰기 + 판단(순수 함수)
+src/cli.ts         scan · push · requests · monthly · list · doctor
 ```
 
 ## 서식을 고칠 때

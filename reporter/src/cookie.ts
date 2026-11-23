@@ -40,12 +40,14 @@ function safeStorageKey(): Buffer {
     pw = execFileSync(
       'security',
       ['find-generic-password', '-w', '-s', 'Chrome Safe Storage', '-a', 'Chrome'],
-      { encoding: 'utf8' },
+      // 접근 허용 창이 떠 있으면 아무도 안 누르는 동안 영원히 기다립니다. 동기 호출이라
+      // 그동안 타이머도 안 돌아서 화면의 수집 요청이 시간 상한에도 안 걸립니다.
+      { encoding: 'utf8', timeout: 60_000 },
     ).trim()
   } catch {
     throw new Error(
       '키체인에서 "Chrome Safe Storage" 를 읽지 못했습니다. ' +
-        '접근을 거부했거나 Chrome 이 설치돼 있지 않습니다. ' +
+        '접근을 거부했거나, 허용 창이 떠 있는 채 1분이 지났거나, Chrome 이 설치돼 있지 않습니다. ' +
         '.env 의 CF_AUTHORIZATION 에 쿠키를 직접 넣어 우회할 수 있습니다.',
     )
   }

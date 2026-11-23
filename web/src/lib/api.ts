@@ -9,6 +9,7 @@ import { SCAN_OUTCOMES } from './constants'
 import type { Category, Resolution, ScanOutcome, Severity, Status, WorkType } from './constants'
 import type { ReportTicket } from './report/ops'
 import { buildMailComment, parseTicketNumber } from './link'
+import { isMissingTable } from './deskScan'
 import { ATTACHMENT_BUCKET, supabase } from './supabase'
 import type {
   AppSetting,
@@ -23,6 +24,7 @@ import type {
   StatusHistoryRow,
   DeskSnapshotDay,
   DeskSnapshotRow,
+  ScanRequestRow,
   SystemRow,
   TaskMapRow,
   TicketFilters,
@@ -832,7 +834,8 @@ export async function fetchManualIntakes(limit = 20): Promise<ManualIntakeRow[]>
 /**
  * desk 는 **별개 시스템**입니다. 그 업무 현황을 이 대시보드에서 보려면 누군가
  * 스냅샷을 올려 줘야 하는데, desk 인증이 특정 Mac 의 Chrome 쿠키라 수집이 그
- * Mac 을 벗어날 수 없습니다. `reporter/` 가 주 2회 올립니다.
+ * Mac 을 벗어날 수 없습니다. `reporter/` 가 주 2회 올리고, 주간보고서를 만들 때는
+ * 화면이 수집 요청을 넣어 그 자리에서 한 번 더 받습니다 (아래 수집 요청).
  *
  * 스냅샷 하나가 수백 KB 라 **목록은 뷰(state 제외)로 봅니다.**
  */
@@ -869,6 +872,74 @@ export async function fetchSnapshotsByDays(days: string[]): Promise<DeskSnapshot
       .select('day, scanned_at, source_at, state, counts')
       .in('day', days),
   ) as DeskSnapshotRow[]
+}
+
+// ── desk 수집 요청 (schema.sql 25장) ─────────────────────────────────────────
+
+/**
+ * 수집 요청 표가 아직 DB 에 없습니다 (schema.sql 25장 미적용).
+ *
+ * 화면이 깨지지 않고 **그 사실을 밝히도록** 따로 구분합니다. 일반 오류와 섞으면
+ * '수집 실패' 로 보여서 수집 PC 를 의심하게 됩니다.
+ */
+export class ScanQueueMissingError extends Error {
+  constructor() {
+    super(
+      '수집 요청 표(desk_scan_requests)가 아직 DB 에 없습니다 — 관리자가 Supabase SQL Editor 에서 ' +
+        'supabase/schema.sql 을 다시 실행해야 합니다 (25장). 그 전까지는 최신 현황을 자동으로 받을 수 없습니다',
+    )
+    this.name = 'ScanQueueMissingError'
+  }
+}
+
+function scanQueueError(error: { code?: string; message: string }): Error {
+  return isMissingTable(error) ? new ScanQueueMissingError() : new Error(error.message)
+}
+
+const SCAN_REQUEST_SELECT = 'id, status, requested_by, requested_at, started_at, finished_at, snapshot_day, error'
+
+/** 최근 요청 몇 건. 이미 대기 중이거나 방금 끝난 것이 있는지 보려고 읽습니다 */
+export async function fetchRecentScanRequests(limit = 10): Promise<ScanRequestRow[]> {
+  const { data, error } = await supabase
+    .from('desk_scan_requests')
+    .select(SCAN_REQUEST_SELECT)
+    .order('requested_at', { ascending: false })
+    .limit(limit)
+  if (error) throw scanQueueError(error)
+  return (data ?? []) as ScanRequestRow[]
+}
+
+export async function fetchScanRequest(id: number): Promise<ScanRequestRow | null> {
+  const { data, error } = await supabase
+    .from('desk_scan_requests')
+    .select(SCAN_REQUEST_SELECT)
+    .eq('id', id)
+    .maybeSingle()
+  if (error) throw scanQueueError(error)
+  return (data as ScanRequestRow | null) ?? null
+}
+
+/**
+ * 수집을 요청합니다. **대기 요청은 하나만** 있을 수 있어서(유일 인덱스), 그사이
+ * 다른 사람이 넣었으면 넣기가 거절되고 — 그 요청을 돌려줍니다. 같이 기다리면 됩니다.
+ */
+export async function requestDeskScan(userId: string): Promise<ScanRequestRow> {
+  const { data, error } = await supabase
+    .from('desk_scan_requests')
+    .insert({ requested_by: userId })
+    .select(SCAN_REQUEST_SELECT)
+    .single()
+  if (!error) return data as ScanRequestRow
+  if (error.code !== '23505') throw scanQueueError(error)
+
+  const { data: pending, error: e2 } = await supabase
+    .from('desk_scan_requests')
+    .select(SCAN_REQUEST_SELECT)
+    .eq('status', 'pending')
+    .maybeSingle()
+  if (e2) throw scanQueueError(e2)
+  if (!pending) throw new Error('수집 요청을 넣지 못했습니다 — 잠시 뒤 다시 누르세요')
+  return pending as ScanRequestRow
 }
 
 /** 태스크 맵. 행은 `id = 1` 하나뿐이고 seed 로 미리 넣혀 있습니다 */

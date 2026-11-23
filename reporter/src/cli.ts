@@ -1,6 +1,6 @@
 #!/usr/bin/env -S npx tsx
 /**
- * CLI — `doctor` · `scan` · `push` · `monthly` · `list`.
+ * CLI — `doctor` · `scan` · `push` · `requests` · `monthly` · `list`.
  *
  * **주간 보고서는 여기 없습니다.** 이슈트래커의 태스크맵 화면에서 만듭니다
  * (`web/src/lib/report/`). 집계 규칙을 두 벌 두지 않기 위해서입니다.
@@ -11,14 +11,17 @@
  *
  *   scan             desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
  *   push             밀린 스냅샷을 대시보드에 올립니다 (scan 없이)
+ *   requests         화면에서 들어온 수집 요청을 처리합니다 (감시 작업이 30초마다 부릅니다)
  *   monthly [YYYY-MM] 그 달의 보고서 pptx 를 만듭니다 (기본: 지난달)
  *   list             업무 전수 목록 xlsx 를 만듭니다 (프로젝트별 · 담당자별)
  *   doctor           설정·연결·쿠키 만료를 점검합니다
  */
 
-import { mkdirSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { loadConfig } from './config.ts'
+import { createClient } from '@supabase/supabase-js'
+import { ROOT, loadConfig } from './config.ts'
 import { daysLeft, resolveCookie } from './cookie.ts'
 import {
   daysBetween,
@@ -38,12 +41,26 @@ import { writeReport } from './render.ts'
 import { buildWorkList, summarizeByOwner } from './worklist.ts'
 import { applyTaskMap, mapFootnotes, type TaskMap } from './taskmap.ts'
 import { toUpload, uploadSnapshot, uploadedDays } from './upload.ts'
+import {
+  SCAN_TIMEOUT_MS,
+  claimPending,
+  failStale,
+  finish,
+  readableError,
+  shouldWarn,
+  waiting,
+  withTimeout,
+  type WarnStamp,
+} from './requests.ts'
 import { writeWorkList } from './xlsx.ts'
 import type { TicketRow } from './types.ts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const cfg = loadConfig()
 const host = new URL(cfg.deskUrl).host
+
+/** 화면의 수집 요청을 처리하는 launchd 감시 작업 (scripts/me.saebom.reporter.requests.plist) */
+const REQUESTS_JOB = 'me.saebom.reporter.requests'
 
 function say(s = '') {
   process.stdout.write(`${s}\n`)
@@ -86,6 +103,18 @@ function mapped(state: import('./types.ts').DeskState, map: TaskMap) {
 }
 
 async function cmdScan() {
+  await scanOnce()
+}
+
+/**
+ * 스캔 한 번 — `npm run scan` 과 화면의 수집 요청(`requests`)이 **같이 씁니다.**
+ * 두 길이 따로 있으면 한쪽만 고쳐져 화면에서 받은 스냅샷과 정기 스캔이 달라집니다.
+ *
+ * 업로드 실패는 던지지 않고 돌려줍니다. `scan` 에게는 성공이고(스냅샷은 로컬에
+ * 남았습니다), 화면의 요청에게는 실패입니다(화면은 대시보드에 올라간 것만 봅니다).
+ * 무엇을 실패로 칠지는 부르는 쪽이 정합니다.
+ */
+async function scanOnce(client?: SupabaseClient): Promise<{ day: string; uploadError: string | null }> {
   say('desk 스캔')
   const hit = cookieOrDie()
   const { state, email } = await fetchState(cfg.deskUrl, hit.value)
@@ -102,7 +131,8 @@ async function cmdScan() {
 
   // 업로드가 실패해도 **스캔은 성공입니다.** 스냅샷은 로컬에 남았고 나중에
   // `push` 로 올릴 수 있습니다. 여기서 죽으면 그날 수집까지 실패한 것처럼 보입니다.
-  await pushAll({ quiet: true })
+  const uploadError = await pushAll({ quiet: true, client })
+  return { day: snap.meta.scannedAt.slice(0, 10), uploadError }
 }
 
 /**
@@ -111,21 +141,25 @@ async function cmdScan() {
  * **로컬 파일이 원본이고 대시보드가 사본입니다.** 대시보드에 없거나, 있어도 로컬이
  * 더 늦게 뜬 날짜만 올립니다 (`toUpload`) — 이미 올린 것을 매번 다시 올리면
  * 스냅샷 하나가 수백 KB 라 스캔마다 몇 MB 를 왕복하게 됩니다.
+ *
+ * `quiet` 이면 던지지 않고 **실패 이유를 돌려줍니다** (성공이면 null).
  */
-async function pushAll(opt: { quiet?: boolean } = {}) {
+async function pushAll(opt: { quiet?: boolean; client?: SupabaseClient } = {}): Promise<string | null> {
   if (!cfg.supabaseUrl || !cfg.supabaseEmail) {
     if (!opt.quiet) throw new Error('대시보드 설정이 없습니다 (.env 의 SUPABASE_* 확인)')
     say('  업로드 : 건너뜀 — 대시보드 설정 없음 (.env 의 SUPABASE_*)')
-    return
+    return '대시보드 설정이 없습니다 (.env 의 SUPABASE_*)'
   }
 
   try {
-    const client = await signIn({
-      url: cfg.supabaseUrl,
-      anonKey: cfg.supabaseAnonKey,
-      email: cfg.supabaseEmail,
-      password: cfg.supabasePassword,
-    })
+    const client =
+      opt.client ??
+      (await signIn({
+        url: cfg.supabaseUrl,
+        anonKey: cfg.supabaseAnonKey,
+        email: cfg.supabaseEmail,
+        password: cfg.supabasePassword,
+      }))
 
     const already = await uploadedDays(client)
     const local = listSnapshots(cfg.snapshotDir).map((file) => ({
@@ -143,18 +177,108 @@ async function pushAll(opt: { quiet?: boolean } = {}) {
     // 태스크 맵은 **올리지 않습니다.** 대시보드가 원본이고 여기는 읽기만 합니다
     if (missing.length > 0) say(`  업로드 : 스냅샷 ${missing.length}개 (${kb}KB)`)
     else say('  업로드 : 새 스냅샷 없음')
+    return null
   } catch (e) {
     // 스캔에 딸려 돌 때는 여기서 멈추지 않습니다 — 스냅샷은 이미 로컬에 남았습니다
     const msg = e instanceof Error ? e.message : String(e)
     if (!opt.quiet) throw e
     say(`  ⚠ 업로드 실패 — ${msg}`)
     say('    스냅샷은 로컬에 남았습니다. 나중에 `npm run push` 로 올리세요.')
+    return msg
   }
 }
 
 async function cmdPush() {
   say('대시보드 업로드')
   await pushAll()
+}
+
+/** 같은 경고를 30초마다 찍지 않기 위한 표시. data/ 는 저장소에 안 올라갑니다 */
+const WARN_FILE = join(ROOT, 'data', 'requests.warned.json')
+
+function warnOnce(msg: string) {
+  let prev: WarnStamp | null = null
+  try {
+    prev = JSON.parse(readFileSync(WARN_FILE, 'utf8')) as WarnStamp
+  } catch {
+    prev = null
+  }
+  const now = Date.now()
+  if (!shouldWarn(prev, msg, now)) return
+  say(`[${stamp()}] ⚠ 수집 요청 확인 실패 — ${msg} (같은 내용은 한 시간에 한 번만 적습니다)`)
+  try {
+    writeFileSync(WARN_FILE, JSON.stringify({ at: now, msg }))
+  } catch {
+    // 표시를 못 남겨도 처리에는 지장이 없습니다. 다음에 한 번 더 찍힐 뿐입니다
+  }
+}
+
+function stamp(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+}
+
+/**
+ * 화면에서 들어온 수집 요청 처리 — launchd 감시 작업이 30초마다 부릅니다.
+ *
+ * **할 일이 없으면 쿼리 한 번(로그인 없이)으로 끝나고 아무것도 안 찍습니다.**
+ * 30초마다 뜨는 작업이 매번 로그를 남기면 정작 처리 기록을 못 찾습니다.
+ *
+ * 스캔은 `scanOnce` — `npm run scan` 과 같은 함수입니다. 성공은 **대시보드에
+ * 올라갔을 때만**입니다. 화면은 대시보드에 있는 스냅샷으로 보고서를 만들기
+ * 때문에, 로컬에만 남은 스냅샷은 화면에게는 없는 것과 같습니다.
+ */
+async function cmdRequests() {
+  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+    warnOnce('대시보드 설정이 없습니다 (.env 의 SUPABASE_URL / SUPABASE_ANON_KEY)')
+    return
+  }
+
+  let todo
+  try {
+    const anon = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    todo = await waiting(anon)
+  } catch (e) {
+    warnOnce(readableError(e))
+    return
+  }
+  // 확인이 되면 경고 표시를 지웁니다 — 다음 실패는 바로 찍혀야 합니다
+  if (existsSync(WARN_FILE)) rmSync(WARN_FILE, { force: true })
+  if (todo.pending === 0 && todo.stale === 0) return
+
+  say(`───────────────────────────────── ${stamp()} 수집 요청`)
+  const client = await connect()
+  if (!client) throw new Error('대시보드 로그인 설정이 없습니다 (.env 의 SUPABASE_EMAIL / SUPABASE_PASSWORD)')
+
+  if (todo.stale > 0) {
+    const n = await failStale(client, new Date())
+    if (n > 0) say(`  정리   : 멈춘 요청 ${n}건을 실패로 닫았습니다`)
+  }
+
+  const ids = await claimPending(client, new Date())
+  if (ids.length === 0) return
+  say(`  요청   : ${ids.length}건 (#${ids.join(' #')}) — 스캔 한 번으로 함께 처리합니다`)
+
+  try {
+    const r = await withTimeout(
+      scanOnce(client),
+      SCAN_TIMEOUT_MS,
+      `수집이 ${SCAN_TIMEOUT_MS / 60_000}분 안에 끝나지 않았습니다 — desk 또는 키체인이 응답하지 않습니다`,
+    )
+    if (r.uploadError) {
+      throw new Error(`스냅샷은 수집했지만 대시보드에 올리지 못했습니다 — ${r.uploadError}`)
+    }
+    await finish(client, ids, { ok: true, day: r.day })
+    say(`  완료   : 스냅샷 ${r.day} 을 올렸습니다`)
+  } catch (e) {
+    const reason = readableError(e)
+    await finish(client, ids, { ok: false, error: reason })
+    say(`  실패   : ${reason}`)
+    process.exitCode = 1
+  }
 }
 
 /** 대시보드 접속. 설정이 없으면 null — 무엇을 포기할지는 부르는 쪽이 정합니다 */
@@ -374,6 +498,26 @@ async function cmdDoctor() {
     say(`  대시보드 : 실패 — ${e instanceof Error ? e.message : e}`)
   }
 
+  // 화면의 '주간보고서 생성' 이 먼저 최신 현황을 받아 오려면 표와 감시 작업이 둘 다 있어야 합니다
+  try {
+    if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('대시보드 설정 없음')
+    const anon = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+    const w = await waiting(anon)
+    say(`  수집요청 : OK — 대기 ${w.pending}건 · 멈춤 ${w.stale}건`)
+  } catch (e) {
+    ok = false
+    say(`  수집요청 : 실패 — ${readableError(e)}`)
+  }
+  try {
+    execFileSync('launchctl', ['list', REQUESTS_JOB], { stdio: 'ignore' })
+    say(`  감시작업 : ${REQUESTS_JOB} 등록됨`)
+  } catch {
+    ok = false
+    say(`  감시작업 : ${REQUESTS_JOB} 이 등록되지 않았습니다 — 화면의 수집 요청이 처리되지 않습니다 (README '정기 실행')`)
+  }
+
   say(ok ? '\n전부 정상입니다.' : '\n일부 점검이 실패했습니다.')
   if (!ok) process.exit(1)
 }
@@ -385,9 +529,14 @@ try {
   else if (cmd === 'monthly') await cmdMonthly(arg)
   else if (cmd === 'list') await cmdList()
   else if (cmd === 'push') await cmdPush()
-  else if (cmd === 'doctor') await cmdDoctor()
+  else if (cmd === 'requests') {
+    await cmdRequests()
+    // 상한에 걸린 스캔은 밑에서 아직 매달려 있을 수 있습니다 (fetch·키체인).
+    // 결과는 이미 적었으므로 끝냅니다 — 안 끝내면 launchd 가 다음 감시를 못 띄웁니다.
+    process.exit(process.exitCode ?? 0)
+  } else if (cmd === 'doctor') await cmdDoctor()
   else {
-    say('사용법: reporter <scan|push|monthly [YYYY-MM]|list|doctor>')
+    say('사용법: reporter <scan|push|requests|monthly [YYYY-MM]|list|doctor>')
     process.exit(2)
   }
 } catch (e) {

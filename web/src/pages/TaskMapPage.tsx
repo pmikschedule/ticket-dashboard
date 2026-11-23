@@ -1,25 +1,20 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { useAuth } from '../hooks/useAuth'
 import {
+  useDeskScan,
   useLatestSnapshot,
   useReportTickets,
   useSaveTaskMap,
   useSnapshotDays,
+  useSnapshotLoader,
   useSnapshots,
   useTaskMap,
 } from '../hooks/queries'
 import { buildWeeklyReport } from '../lib/report/build'
 import { downloadWeekly } from '../lib/report/render'
-import {
-  nextWeek,
-  parseWeekLabel,
-  previousWeek,
-  rangeLabel,
-  snapshotsFor,
-  todayIso,
-  weekForSnapshot,
-} from '../lib/report/week'
+import { nextWeek, previousWeek, rangeLabel, resolveWeek, todayIso } from '../lib/report/week'
+import { shortDay, wantsFreshScan } from '../lib/deskScan'
 import { REPORT_SUBTITLE } from '../lib/constants'
 import {
   addEntry,
@@ -66,6 +61,18 @@ export default function TaskMapPage() {
   const [buildError, setBuildError] = useState<string | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
+  // 생성 직전 desk 수집 — 진행 문구와, 못 받았을 때의 이유
+  const scanDesk = useDeskScan()
+  const loader = useSnapshotLoader()
+  const [progress, setProgress] = useState<string | null>(null)
+  const [scanIssue, setScanIssue] = useState<{ reason: string; missingTable: boolean } | null>(null)
+  const alive = useRef(true)
+  useEffect(() => {
+    alive.current = true
+    return () => {
+      alive.current = false
+    }
+  }, [])
 
   const state = (snapshot.data?.state ?? null) as DeskState | null
   const saved = (taskMap.data?.entries ?? []) as TaskEntry[]
@@ -86,26 +93,25 @@ export default function TaskMapPage() {
   // 구간이고(오늘 날짜로 우기면 자료가 없어 빈 보고서가 나옵니다), 오늘 기준
   // 구간과 어긋나면 **화면이 그 사실을 말합니다** — 조용히 지난 주를 내놓으면
   // 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다.
-  const weeks = snapshot.data ? weekForSnapshot(snapshot.data.day, todayIso()) : null
   // 골라 둔 구간. null 이면 기본값(오늘이 속한 구간)입니다 — 대개 그대로 씁니다
   const [weekPick, setWeekPick] = useState<string | null>(null)
-  const week = weeks ? (weekPick ? (parseWeekLabel(weekPick) ?? weeks.buildable) : weeks.buildable) : null
+  // 그 구간을 닫는 스냅샷 · 기준 · 더 앞선 것 (금주 처리 없을 때 기준을 앞당깁니다).
+  // 생성 버튼도 최신 수집을 받은 뒤 **같은 함수로** 다시 고릅니다.
+  const resolved = snapshot.data
+    ? resolveWeek(snapshot.data.day, (snapshotDays.data ?? []).map((d) => d.day), weekPick, todayIso())
+    : null
+  const weeks = resolved?.weeks ?? null
+  const week = resolved?.week ?? null
   // 앞으로는 **스냅샷이 있는 구간까지만.** 그 너머는 그 구간을 닫을 스냅샷이 없어
   // 앞 구간의 스냅샷을 자기 자신과 비교하게 됩니다 — 2026-09-28 에 그렇게 만든
   // 보고서가 '금주 완료 0 · 착수 0 · 신규 0' 이었습니다. 스냅샷이 밀렸다는 사실은
   // 아래 배너가 말합니다.
   const canForward = Boolean(weeks && week && week.id < weeks.buildable.id)
   const weekShifted = Boolean(weekPick) && week?.id !== weeks?.buildable.id
-  // 그 구간을 닫는 스냅샷 · 기준 · 더 앞선 것 (금주 처리 없을 때 기준을 앞당깁니다).
-  // 최신 스냅샷은 이미 받아 뒀으므로 다시 받지 않습니다.
-  const plan = week
-    ? snapshotsFor([...(snapshotDays.data ?? []).map((d) => d.day), ...(snapshot.data ? [snapshot.data.day] : [])], week)
-    : null
+  const plan = resolved?.plan ?? null
+  // 미리 받아 둡니다 — 생성 버튼이 같은 캐시를 씁니다. 최신 스냅샷은 이미 받았습니다
   const wanted = plan ? [plan.current, plan.base, ...plan.earlier].filter((d): d is string => Boolean(d)) : []
   const others = useSnapshots(wanted.filter((d) => d !== snapshot.data?.day))
-  const byDay = new Map(
-    [...(snapshot.data ? [snapshot.data] : []), ...(others.data ?? [])].map((r) => [r.day, r]),
-  )
   // 2장 운영 현황의 원천. 못 읽어도 보고서는 나와야 하므로 빈 배열로 넘깁니다
   const tickets = useReportTickets()
   const unmapped = (state?.work.length ?? 0) - claimedIds(entries).size
@@ -140,31 +146,58 @@ export default function TaskMapPage() {
    * pptx 는 **브라우저에서** 만들어 바로 내려받습니다. 서버가 없으므로 업무
    * 내용이 어디로도 전송되지 않습니다.
    *
+   * **오늘 구간이면 먼저 desk 최신 현황을 받아 옵니다** (`useDeskScan`). 정기 스캔은
+   * 월 18:00 · 화 09:00 뿐이라 그 사이 desk 에 등록한 일이 빠졌습니다. 못 받으면
+   * 옛 수집본으로 조용히 만들지 않고 이유를 밝힌 뒤, 사람이 '기존 수집본으로 생성'
+   * 을 눌러야 만듭니다 (`skipScan`).
+   *
    * 저장하지 않은 편집도 그대로 반영합니다 — 미리 보고 고칠 수 있어야 합니다.
    */
-  async function onBuild() {
-    if (!week || !plan) return
+  async function onBuild(opt: { skipScan?: boolean } = {}) {
+    if (!snapshot.data) return
     setBuilding(true)
     setBuildError(null)
+    setScanIssue(null)
     try {
-      const current = plan.current ? byDay.get(plan.current) : undefined
-      if (!current) throw new Error(`${rangeLabel(week)} 구간 안에 뜬 desk 스냅샷이 없습니다`)
-      const base = plan.base ? byDay.get(plan.base) : undefined
+      let fresh = false
+      if (!opt.skipScan && wantsFreshScan(weekPick, todayIso())) {
+        if (!user) throw new Error('로그인 정보를 읽지 못했습니다. 새로고침 후 다시 시도하세요')
+        const r = await scanDesk({ userId: user.id, onProgress: setProgress, alive: () => alive.current })
+        if (!r.ok) {
+          setScanIssue({ reason: r.reason, missingTable: r.missingTable })
+          return
+        }
+        fresh = true
+      }
+      setProgress('보고서 만드는 중…')
+
+      // 받은 뒤의 스냅샷으로 구간을 **다시** 고릅니다 — 화면과 같은 함수입니다
+      const latest = await loader.latest(fresh)
+      if (!latest) throw new Error('desk 스냅샷이 없습니다')
+      const dayList = (await loader.days(fresh)).map((d) => d.day)
+      const { week: w, plan: p } = resolveWeek(latest.day, dayList, weekPick, todayIso())
+      const need = [p.current, p.base, ...p.earlier].filter((d): d is string => Boolean(d))
+      const rows = await loader.byDays(need.filter((d) => d !== latest.day))
+      const byDay = new Map([latest, ...rows].map((r) => [r.day, r]))
+
+      const current = p.current ? byDay.get(p.current) : undefined
+      if (!current) throw new Error(`${rangeLabel(w)} 구간 안에 뜬 desk 스냅샷이 없습니다`)
+      const base = p.base ? byDay.get(p.base) : undefined
       // 기준을 못 받았는데 그대로 만들면 '기준 주차 — 비교 대상 없음' 으로 조용히 나갑니다
-      if (plan.base && !base) throw new Error(`기준 스냅샷(${plan.base})을 불러오지 못했습니다. 새로고침 후 다시 시도하세요`)
+      if (p.base && !base) throw new Error(`기준 스냅샷(${p.base})을 불러오지 못했습니다. 새로고침 후 다시 시도하세요`)
       const out = buildWeeklyReport({
         state: current.state as DeskState,
         day: current.day,
         base: (base?.state ?? null) as DeskState | null,
         baseDay: base?.day ?? null,
-        earlier: plan.earlier.flatMap((d) => {
+        earlier: p.earlier.flatMap((d) => {
           const r = byDay.get(d)
           return r ? [{ day: r.day, state: r.state as DeskState }] : []
         }),
         reportedOn: todayIso(),
         entries,
         tickets: tickets.data ?? [],
-        weekId: week.id,
+        weekId: w.id,
         subtitle: REPORT_SUBTITLE,
       })
       await downloadWeekly(out.model, out.nextLabel, out.fileName)
@@ -172,6 +205,7 @@ export default function TaskMapPage() {
       setBuildError(e instanceof Error ? e.message : String(e))
     } finally {
       setBuilding(false)
+      setProgress(null)
     }
   }
 
@@ -256,11 +290,13 @@ export default function TaskMapPage() {
               }`}
               title={
                 plan?.current
-                  ? `${rangeLabel(week)} 구간으로 만듭니다`
+                  ? wantsFreshScan(weekPick, todayIso())
+                    ? 'desk 최신 현황을 먼저 받아 온 뒤 오늘 구간으로 만듭니다'
+                    : `${rangeLabel(week)} 구간으로 만듭니다`
                   : `${rangeLabel(week)} 구간 안에 뜬 스냅샷이 없어 만들 수 없습니다`
               }
             >
-              {building ? '만드는 중…' : '주간보고서 생성'}
+              {building ? (progress?.startsWith('desk') ? '수집 중…' : '만드는 중…') : '주간보고서 생성'}
             </button>
           </div>
         )}
@@ -290,9 +326,45 @@ export default function TaskMapPage() {
           <b>{rangeLabel(weeks.target)}</b> 이고 {weeks.behindWeeks}주 밀렸습니다. 그 뒤에 등록되거나
           끝난 일은 보고서에 없습니다.
           <br />
-          수집 PC 에서 <code className="rounded bg-white px-1">cd reporter &amp;&amp; npm run scan</code>{' '}
-          을 돌린 뒤 이 화면을 새로고침하면 현재 작업 기준으로 만들어집니다. desk 인증이 그 PC 의
-          브라우저 쿠키라 수집이 거기를 벗어날 수 없습니다.
+          <b>주간보고서 생성</b>을 누르면 수집 PC 에 최신 수집을 먼저 요청하고, 받으면 오늘 구간으로
+          만듭니다. desk 인증이 그 PC 의 브라우저 쿠키라 수집이 거기를 벗어날 수 없습니다 — 그 PC 가
+          켜져 있어야 합니다.
+        </div>
+      )}
+
+      {progress && (
+        <p className="rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 ring-1 ring-sky-200" role="status">
+          {progress}
+        </p>
+      )}
+
+      {scanIssue && snapshot.data && (
+        <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs leading-relaxed text-rose-800 ring-1 ring-rose-200">
+          <b>{scanIssue.missingTable ? 'desk 최신 현황을 자동으로 받을 수 없습니다.' : 'desk 최신 현황을 받지 못했습니다.'}</b>{' '}
+          {scanIssue.reason}
+          <br />
+          지금 가진 마지막 수집본은 <b>{shortDay(snapshot.data.day)}</b> 것입니다. 그 뒤에 desk 에 등록되거나 바뀐 일은
+          이 수집본에 없으므로, 보고서를 만들지 않았습니다.
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button
+              type="button"
+              disabled={building}
+              onClick={() => void onBuild({ skipScan: true })}
+              className="rounded-lg border border-rose-300 bg-white px-3 py-1 text-xs text-rose-800 hover:bg-rose-100 disabled:opacity-40"
+            >
+              기존 수집본({shortDay(snapshot.data.day)})으로 생성
+            </button>
+            {!scanIssue.missingTable && (
+              <button
+                type="button"
+                disabled={building}
+                onClick={() => void onBuild()}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
+              >
+                다시 시도
+              </button>
+            )}
+          </div>
         </div>
       )}
 

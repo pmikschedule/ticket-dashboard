@@ -4,6 +4,7 @@ import type {
   Role,
   RuleKind,
   ScanOutcome,
+  ScanRequestStatus,
   Severity,
   Status,
   SystemCode,
@@ -263,6 +264,20 @@ export interface DeskSnapshotDay {
 export interface DeskSnapshotRow extends DeskSnapshotDay {
   /** desk `/api/state` 응답 그대로. 가공하지 않고 보존합니다 */
   state: unknown
+}
+
+/** desk 수집 요청 한 건 (schema.sql 25장). 웹이 넣고 수집 Mac 이 처리합니다 */
+export interface ScanRequestRow {
+  id: number
+  status: ScanRequestStatus
+  requested_by: string | null
+  requested_at: string
+  started_at: string | null
+  finished_at: string | null
+  /** 성공하면 올라간 스냅샷의 날짜 (`desk_snapshots.day`) */
+  snapshot_day: string | null
+  /** 실패 이유. 수집 Mac 이 비밀값을 지운 문장을 적습니다 */
+  error: string | null
 }
 
 export interface TaskMapRow {

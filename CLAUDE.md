@@ -126,6 +126,14 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
   현재, 구간 시작 전 마지막 것이 기준입니다. 늘 최신을 현재로 쓰던 때, 스냅샷보다
   뒤 구간을 고르면 **기준과 현재가 같은 스냅샷**이 되어 완료·착수·신규가 전부 0 으로
   나왔습니다 (2026-09-28). 보고일은 만든 날, 지연 판정은 스냅샷 날입니다.
+- **주간보고서 생성 버튼은 먼저 desk 최신 현황을 받아 옵니다** (오늘 구간일 때만).
+  웹이 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장) 수집 Mac 의 감시 작업
+  (`me.saebom.reporter.requests`, 30초마다 `npm run requests`)이 `npm run scan` 과
+  **같은 함수**(`scanOnce`)로 스캔·업로드한 뒤, 화면이 최대 2분 기다렸다 만듭니다.
+  정기 스캔은 월 18:00·화 09:00 뿐이라 그 사이 desk 에 등록한 일이 빠졌습니다
+  (11/20 등록한 BRS HK 7건이 11/23 보고서에서). **못 받으면 옛 수집본으로 조용히
+  만들지 않습니다** — 이유와 마지막 수집 날짜를 밝히고, 사람이 '기존 수집본(MM/DD)
+  으로 생성' 을 눌러야 만듭니다. 판단은 `lib/deskScan.ts` 순수 함수입니다.
 - **금주에 완료가 없으면 비교 기준을 한 주씩 앞당깁니다** (`build.pickBaseline`,
   최대 2주). 연휴 주(추석 9/24~25)에 지난주와만 비교하면 직전 주에 끝낸 일이 어느
   보고서에도 안 남습니다. 앞당겼다는 사실과 까닭(desk `holidays`)을 **요약 띠의
@@ -171,6 +179,9 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
 import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 대신 **보고서 건수가
 조용히 0 이 됩니다** — 모르는 값은 어느 칸에도 안 세기 때문입니다.
 
+desk 수집 요청 상태(`pending`·`running`·`done`·`failed`)는 **schema.sql 25장 ·
+`web/src/lib/constants.ts` · `reporter/src/types.ts`** 세 곳입니다 (에이전트는 안 씁니다).
+
 ## 차트
 
 - 단일 계열에는 색을 돌려 쓰지 않습니다 — 막대 옆 라벨이 이미 항목을 구분합니다.
@@ -181,13 +192,14 @@ import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 �
 ## 명령
 
 ```bash
-cd web      && npm test && npm run build   # 순수 로직 316개 + 타입체크
+cd web      && npm test && npm run build   # 순수 로직 344개 + 타입체크
 cd agent    && pytest -q                   # 순수 로직·파이프라인 196개
 cd agent    && ticket-agent doctor         # 설정·연결 점검
-cd reporter && npm test                    # 집계·레이아웃 176개 + 타입체크
+cd reporter && npm test                    # 집계·레이아웃 195개 + 타입체크
 cd reporter && npm run doctor              # 설정·연결·쿠키 + 스냅샷 나이 점검
 cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
 cd reporter && npm run push                # 밀린 스냅샷만 올리기
+cd reporter && npm run requests            # 화면의 수집 요청 처리 (launchd 가 30초마다)
 cd reporter && npm run monthly             # 지난달 보고서 pptx
 cd reporter && npm run list                # 업무 전수 목록 xlsx
 ```
@@ -197,6 +209,7 @@ cd reporter && npm run list                # 업무 전수 목록 xlsx
 - **접수일** = `tickets.received_at` (메일 수신일시). `created_at`(에이전트 적재 시각)이 아닙니다.
 - **리드타임** = 접수 → 완료 경과 시간. `ticket_lead_times` 뷰가 계산합니다.
 - **발송 큐** = `outbound_emails`. 웹이 넣고 에이전트가 집어갑니다.
+- **수집 요청 큐** = `desk_scan_requests`. 같은 구조 — 웹이 넣고 수집 Mac 이 집어갑니다.
 - **수동 등록 큐** = `manual_intake`. 같은 구조. **`is_request` 판정을 하지 않습니다** —
   사람이 등록한 이상 요청 여부는 이미 결정됐고 LLM 은 분류만 합니다.
 - **MTTA/MTTR** = 접수→착수(대기) / 착수→완료(수리). 둘 다 **장애만** 모수로 삼고,

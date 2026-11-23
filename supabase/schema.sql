@@ -24,6 +24,7 @@ create extension if not exists pgcrypto;
 -- severity    : critical | high | medium | low
 -- category    : error | improve | fix | new                               (중분류)
 -- system_type : public.systems 등록표를 따릅니다 (고정 목록 아님. 15.1 참조)
+-- desk_scan_requests.status : pending | running | done | failed             (desk 수집 요청. 25 참조)
 
 -- ----------------------------------------------------------------------------
 -- 2. users — Admin 및 팀원 계정 정보
@@ -1751,3 +1752,104 @@ create or replace view public.desk_snapshot_days as
 select day, scanned_at, source_at, counts
 from public.desk_snapshots
 order by day desc;
+
+-- ============================================================================
+-- 25. desk 수집 요청 큐 — 보고서를 만들기 직전에 최신 현황을 받아 옵니다
+-- ============================================================================
+-- 스냅샷은 수집 Mac 의 launchd 가 **월 18:00 · 화 09:00** 에만 떴습니다. 그 사이에
+-- desk 를 고치면 보고서에 안 실렸습니다 — 11/20 에 등록한 BRS HK 신규 업무 7건이
+-- 11/23 보고서에서 빠졌습니다.
+--
+-- 브라우저는 스캔을 직접 돌릴 수 없습니다. desk 인증이 그 Mac 의 Chrome 쿠키라
+-- 수집이 그 Mac 을 벗어날 수 없기 때문입니다 (24장). 그래서 회신 발송 큐
+-- (outbound_emails)·수동 등록 큐(manual_intake)와 같은 모양으로 둡니다:
+-- **웹이 요청을 넣고, 그 Mac 의 감시 작업이 집어 가 스캔·업로드하고, 웹은 끝나길
+-- 기다렸다가 보고서를 만듭니다.**
+--
+-- 상태 코드값은 web/src/lib/constants.ts 의 SCAN_REQUEST_STATUSES,
+-- reporter/src/types.ts 의 SCAN_REQUEST_STATUSES 와 같아야 합니다.
+-- (에이전트는 이 표를 안 씁니다)
+-- ----------------------------------------------------------------------------
+create table if not exists public.desk_scan_requests (
+  id           bigserial primary key,
+  status       text not null default 'pending'
+                 check (status in ('pending', 'running', 'done', 'failed')),
+  requested_by uuid references public.users(id) on delete set null,
+  requested_at timestamptz not null default now(),
+  started_at   timestamptz,                 -- 감시 작업이 집어 간 시각
+  finished_at  timestamptz,
+  snapshot_day date,                        -- 성공하면 올라간 스냅샷의 날짜 (desk_snapshots.day)
+  error        text                         -- 실패 이유. 사람이 읽을 문장이고 비밀값은 넣지 않습니다
+);
+
+comment on table public.desk_scan_requests is
+  'desk 수집 요청 큐. 웹이 넣고 수집 Mac 의 감시 작업(reporter `npm run requests`)이 처리합니다';
+
+create index if not exists idx_desk_scan_open
+  on public.desk_scan_requests (requested_at) where (status in ('pending', 'running'));
+
+-- 대기 요청은 **하나만.** 여러 사람이 동시에 눌러도 쌓이지 않고 같은 요청을 함께
+-- 기다립니다 — 웹은 넣다가 이 제약에 걸리면 이미 있는 대기 요청을 다시 읽습니다.
+create unique index if not exists uq_desk_scan_one_pending
+  on public.desk_scan_requests (status) where (status = 'pending');
+
+alter table public.desk_scan_requests enable row level security;
+
+drop policy if exists desk_scan_read         on public.desk_scan_requests;
+drop policy if exists desk_scan_insert       on public.desk_scan_requests;
+drop policy if exists desk_scan_update_admin on public.desk_scan_requests;
+drop policy if exists desk_scan_delete_admin on public.desk_scan_requests;
+
+create policy desk_scan_read on public.desk_scan_requests
+  for select using (public.is_member());
+
+-- 요청은 **팀원 전원**이 넣습니다. 주간보고서는 누구나 만듭니다.
+-- 넣을 때는 대기 상태만 됩니다 — '끝남' 으로 넣으면 다른 사람의 화면이 방금 끝난
+-- 수집이 있는 줄 알고 옛 스냅샷으로 보고서를 만듭니다.
+create policy desk_scan_insert on public.desk_scan_requests
+  for insert with check (
+    public.is_member()
+    and requested_by = auth.uid()
+    and status = 'pending'
+    and started_at is null and finished_at is null
+    and snapshot_day is null and error is null
+  );
+
+-- 상태를 바꾸는 것은 수집 Mac 뿐입니다. 그 Mac 은 관리자 계정으로 로그인합니다
+-- (24장과 같은 이유 — service_role 키를 쓰지 않습니다).
+create policy desk_scan_update_admin on public.desk_scan_requests
+  for update using (public.is_admin()) with check (public.is_admin());
+
+create policy desk_scan_delete_admin on public.desk_scan_requests
+  for delete using (public.is_admin());
+
+-- ----------------------------------------------------------------------------
+-- 25.1 "할 일이 있는가" — 로그인 없이 묻는 함수
+-- ----------------------------------------------------------------------------
+-- 감시 작업은 30초마다 뜹니다. 그때마다 로그인하면 하루 2,880번 auth 세션이
+-- 새로 생기고(auth.sessions 에 쌓입니다) 로그인 횟수 제한에도 가까워집니다.
+-- 그래서 **건수만** 로그인 없이(anon) 묻고, 할 일이 있을 때만 로그인합니다.
+--
+-- 돌려주는 것은 숫자 두 개뿐입니다 — 누가 언제 무엇을 요청했는지는 나가지
+-- 않습니다. 표 자체는 여전히 is_member() 로 막혀 있습니다.
+--
+-- stale = 집어 간 뒤 p_stale_minutes 분이 지나도 안 끝난 요청. 수집 Mac 이
+-- 잠들었거나 프로세스가 죽은 것이고, 감시 작업이 실패로 정리합니다.
+create or replace function public.desk_scan_waiting(p_stale_minutes int default 10)
+returns table (pending int, stale int)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select
+    (count(*) filter (where status = 'pending'))::int,
+    (count(*) filter (
+      where status = 'running'
+        and started_at < now() - make_interval(mins => greatest(p_stale_minutes, 1))
+    ))::int
+  from public.desk_scan_requests;
+$$;
+
+revoke all on function public.desk_scan_waiting(int) from public;
+grant execute on function public.desk_scan_waiting(int) to anon, authenticated;

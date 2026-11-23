@@ -120,6 +120,17 @@ export const WORK_TYPE_LABELS: Record<WorkType, string> = {
   development: '신규개발',
 }
 
+/**
+ * desk 수집 요청 상태 (`desk_scan_requests.status`, schema.sql 25장).
+ *
+ * `web/src/lib/constants.ts` 의 같은 이름과 **같아야 합니다.** 웹이 `pending` 으로
+ * 넣고 이 도구가 `running` → `done`·`failed` 로 옮깁니다. 여기가 틀리면 저장이
+ * check 제약에 걸려 요청이 `running` 에 멈추고, 화면은 2분을 기다리다 시간 초과로
+ * 끝납니다. 에이전트는 이 표를 안 씁니다.
+ */
+export const SCAN_REQUEST_STATUSES = ['pending', 'running', 'done', 'failed'] as const
+export type ScanRequestStatus = (typeof SCAN_REQUEST_STATUSES)[number]
+
 /** 대시보드에서 읽어 오는 티켓의 최소 형태. 대분류 3종을 모두 담습니다 */
 export interface TicketRow {
   id: string
