@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  주기 실행 — 월·화 스캔, 월 1회 월간보고.
+  주기 실행 — 매월 1일 09:30 월간보고만.
 
-  주간 구간이 화~월 이라 월요일이 끝나야 주가 닫힙니다. 월요일 저녁 스캔이
-  구간 마감 상태를 담고, 화요일 아침 스캔이 그것을 대시보드에 올립니다.
+  2026-11-23 부터 desk 수집(월 18:00 · 화 09:00)은 사내 PC 의 에이전트가 합니다.
+  이 Mac 은 스캔하지 않고, 월간보고가 대시보드의 스냅샷을 내려받아(`pull`) 만듭니다.
+  예전 월·화 스캔 두 줄은 그래서 뺐습니다. 비상시 수집은 손으로 `npm run scan`.
   주간 보고서 자체는 이슈트래커 화면에서 사람이 만듭니다.
 
   경로가 박혀 있습니다. 저장소를 다른 곳에 두면 아래 세 군데를 고치세요:
@@ -20,8 +21,8 @@
   해제:   launchctl unload ~/Library/LaunchAgents/me.saebom.reporter.plist
   즉시실행: launchctl start me.saebom.reporter
 
-  ⚠️ 키체인 접근이 필요하므로 **로그인한 사용자 세션**에서 돌아야 합니다.
-     LaunchDaemon(시스템 전역)으로 옮기면 쿠키를 못 읽습니다.
+  ⚠️ **로그인한 사용자 세션**(LaunchAgent)에서 돕니다. 월간보고는 desk 쿠키가
+     필요 없지만, 비상용 scan 을 다시 붙일 때 키체인을 읽어야 해서 그대로 둡니다.
 -->
 <plist version="1.0">
 <dict>
@@ -38,19 +39,9 @@
   <key>WorkingDirectory</key>
   <string>/Users/milliontube/PMS/reporter</string>
 
-  <!-- 월 18:00 스캔(구간 마감) / 화 09:00 스캔 / 매월 1일 09:30 월간보고 -->
+  <!-- 매월 1일 09:30 월간보고 (스캔은 사내 PC 에이전트가 합니다) -->
   <key>StartCalendarInterval</key>
   <array>
-    <dict>
-      <key>Weekday</key><integer>1</integer>
-      <key>Hour</key><integer>18</integer>
-      <key>Minute</key><integer>0</integer>
-    </dict>
-    <dict>
-      <key>Weekday</key><integer>2</integer>
-      <key>Hour</key><integer>9</integer>
-      <key>Minute</key><integer>0</integer>
-    </dict>
     <dict>
       <key>Day</key><integer>1</integer>
       <key>Hour</key><integer>9</integer>

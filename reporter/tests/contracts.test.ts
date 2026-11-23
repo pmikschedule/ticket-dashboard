@@ -13,9 +13,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { daysLeft, jwtExpiry } from '../src/cookie.ts'
 import { fetchState, makeSnapshot } from '../src/desk.ts'
 import { SCAN_TIMEOUT_MS, STALE_RUNNING_MINUTES, readableError } from '../src/requests.ts'
-import { SCAN_REQUEST_STATUSES } from '../src/types.ts'
+import { DESK_SETTING_KEYS, SCAN_REQUEST_STATUSES } from '../src/types.ts'
 import type { DeskState } from '../src/types.ts'
-import { snapshotRow, toUpload } from '../src/upload.ts'
+import { snapshotFromRow, snapshotRow, toUpload } from '../src/upload.ts'
 
 // cookie.ts 는 Chrome 쿠키 DB 를 읽으려고 `node:sqlite` 를 불러옵니다. vite 가 그 내장
 // 모듈을 못 찾으므로 빈 것으로 바꿉니다 — 여기서 쓰는 것은 jwtExpiry·daysLeft 뿐입니다.
@@ -32,6 +32,9 @@ describe('계약 — 큐 상수 (constants.json)', () => {
     expect(STALE_RUNNING_MINUTES).toBe(c.stale_running_minutes)
     expect(SCAN_TIMEOUT_MS / 1000).toBe(c.scan_timeout_seconds)
   })
+  it('에이전트가 적는 desk 상태 설정 이름', () => {
+    expect({ ...DESK_SETTING_KEYS }).toEqual(c.setting_keys)
+  })
 })
 
 describe('계약 — 스냅샷 → 행 (snapshot_rows.json)', () => {
@@ -40,6 +43,11 @@ describe('계약 — 스냅샷 → 행 (snapshot_rows.json)', () => {
       const row = snapshotRow(makeSnapshot(c.response.state as DeskState, new Date(c.scanned_at)))
       expect(row).toEqual(c.expected_row)
       expect(Object.keys(row).sort()).toEqual(['counts', 'day', 'scanned_at', 'source_at', 'state'])
+    })
+    it(`${c.name} — 내려받아도 같은 행`, () => {
+      const row = c.expected_row
+      const back = snapshotRow(snapshotFromRow({ scanned_at: row.scanned_at, state: row.state }))
+      expect(back).toEqual(row)
     })
   }
 })

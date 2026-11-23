@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as upload from '../src/upload.ts'
-import { snapshotRow, toUpload } from '../src/upload.ts'
+import { snapshotFromRow, snapshotRow, toPull, toUpload } from '../src/upload.ts'
 import type { DeskState, Snapshot } from '../src/types.ts'
 
 function state(over: Partial<DeskState> = {}): DeskState {
@@ -86,5 +86,84 @@ describe('무엇을 올리는가', () => {
 
   it('이미 올린 그 스냅샷은 다시 올리지 않습니다 (Z 와 +00:00 이 섞여 와도)', () => {
     expect(toUpload([{ file: '2026-09-21.json', scannedAt: '2026-09-21T09:00:07.181Z' }], remote)).toEqual([])
+  })
+})
+
+describe('무엇을 내려받는가 — 대시보드가 원본 (11/23 부터)', () => {
+  const remote = new Map([
+    ['2026-11-17', '2026-11-17T00:00:05.071+00:00'],
+    ['2026-11-23', '2026-11-23T03:44:27.079+00:00'],
+  ])
+
+  it('로컬에 없는 날짜는 받습니다', () => {
+    expect(toPull([{ file: '2026-11-17.json', scannedAt: '2026-11-17T00:00:05.071Z' }], remote)).toEqual([
+      '2026-11-23',
+    ])
+  })
+
+  it('같은 날 에이전트가 다시 수집했으면 받습니다 — 로컬은 아침 것', () => {
+    const local = [
+      { file: '2026-11-17.json', scannedAt: '2026-11-17T00:00:05.071Z' },
+      { file: '2026-11-23.json', scannedAt: '2026-11-23T03:39:32.545Z' },
+    ]
+    expect(toPull(local, remote)).toEqual(['2026-11-23'])
+  })
+
+  it('같은 시점이면 받지 않습니다 — Z 와 +00:00 은 같은 시각', () => {
+    const local = [
+      { file: '2026-11-17.json', scannedAt: '2026-11-17T00:00:05.071Z' },
+      { file: '2026-11-23.json', scannedAt: '2026-11-23T03:44:27.079Z' },
+    ]
+    expect(toPull(local, remote)).toEqual([])
+  })
+
+  it('로컬이 더 늦으면 덮지 않습니다 — 비상용 scan 이 뜬 날', () => {
+    const local = [
+      { file: '2026-11-17.json', scannedAt: '2026-11-17T09:00:00.000Z' },
+      { file: '2026-11-23.json', scannedAt: '2026-11-23T09:00:00.000Z' },
+    ]
+    expect(toPull(local, remote)).toEqual([])
+  })
+
+  it('날짜 순으로 돌려줍니다', () => {
+    const r = new Map([
+      ['2026-11-23', '2026-11-23T03:44:27.079+00:00'],
+      ['2026-11-10', '2026-11-10T09:00:00.000+00:00'],
+    ])
+    expect(toPull([], r)).toEqual(['2026-11-10', '2026-11-23'])
+  })
+})
+
+describe('행 → 스냅샷', () => {
+  const st = state({ updatedAt: '2026-11-20 14:28:34', work: [{ id: 'w1' } as DeskState['work'][number]] })
+
+  it('스캔 시각을 밀리초+Z 로 맞춥니다 — 표는 +00:00 으로 돌려줍니다', () => {
+    const s = snapshotFromRow({ scanned_at: '2026-11-23T03:44:27.079+00:00', state: st })
+    expect(s.meta.scannedAt).toBe('2026-11-23T03:44:27.079Z')
+    expect(s.meta.yearMonth).toBe('2026-11')
+  })
+
+  it('원본 시각은 state 의 것 그대로 — 표의 source_at(시간대 붙은 것)을 쓰지 않습니다', () => {
+    const s = snapshotFromRow({ scanned_at: '2026-11-23T03:44:27.079+00:00', state: st })
+    expect(s.meta.sourceUpdatedAt).toBe('2026-11-20 14:28:34')
+  })
+
+  it('건수는 state 에서 다시 셉니다', () => {
+    const s = snapshotFromRow({ scanned_at: '2026-11-23T03:44:27.079Z', state: st })
+    expect(s.meta.counts).toEqual({ work: 1, projects: 0, decisions: 0 })
+  })
+
+  it('왕복해도 같은 행입니다', () => {
+    const row = snapshotRow(snapshotFromRow({ scanned_at: '2026-11-23T03:44:27.079+00:00', state: st }))
+    expect(row.day).toBe('2026-11-23')
+    expect(row.scanned_at).toBe('2026-11-23T03:44:27.079Z')
+    expect(row.source_at).toBe('2026-11-20 14:28:34')
+    expect(row.state).toBe(st)
+  })
+
+  it('본문이 없거나 시각이 깨졌으면 멈춥니다 — 빈 스냅샷으로 보고서를 만들지 않습니다', () => {
+    expect(() => snapshotFromRow({ scanned_at: '2026-11-23T03:44:27Z', state: null })).toThrow(/업무 목록/)
+    expect(() => snapshotFromRow({ scanned_at: '2026-11-23T03:44:27Z', state: {} })).toThrow(/업무 목록/)
+    expect(() => snapshotFromRow({ scanned_at: 'nope', state: st })).toThrow(/시각/)
   })
 })

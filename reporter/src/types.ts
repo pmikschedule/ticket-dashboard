@@ -129,6 +129,19 @@ export const WORK_TYPE_LABELS: Record<WorkType, string> = {
  * 끝납니다. 에이전트는 이 표를 안 씁니다.
  */
 export const SCAN_REQUEST_STATUSES = ['pending', 'running', 'done', 'failed'] as const
+
+/**
+ * 에이전트가 desk 수집 상태를 적는 `app_settings` 키 (schema.sql 25.3).
+ * 비밀이 아닌 것만 있습니다 — 쿠키 값은 `app_secrets` 에 있고 여기서 안 읽습니다.
+ * `contracts/desk/constants.json` 의 `setting_keys` 와 같아야 합니다.
+ */
+export const DESK_SETTING_KEYS = {
+  auth_source: 'desk_auth_source',
+  cookie_expires_at: 'desk_cookie_expires_at',
+  last_scan_at: 'desk_last_scan_at',
+  last_scan_ok: 'desk_last_scan_ok',
+  last_scan_note: 'desk_last_scan_note',
+} as const
 export type ScanRequestStatus = (typeof SCAN_REQUEST_STATUSES)[number]
 
 /** 대시보드에서 읽어 오는 티켓의 최소 형태. 대분류 3종을 모두 담습니다 */

@@ -1,18 +1,17 @@
 # desk 수집기 · 월간 보고서 생성기
 
-desk 를 주기적으로 떠서 **스냅샷을 쌓고 대시보드에 올립니다.** 그 위에 월간
-보고서와 업무 전수 목록을 만듭니다.
+대시보드에 쌓인 desk 스냅샷을 내려받아 **월간 보고서와 업무 전수 목록**을 만듭니다.
 
 > **desk 수집은 2026-11-23 부터 에이전트(사내 윈도우 PC · ticket-agent 0.5.0)가 합니다**
 > — 정기 수집과 화면의 수집 요청 둘 다 ([docs/DESIGN.md](../docs/DESIGN.md) 14장).
-> 이 도구의 `scan`·`push`·`requests` 와 아래 launchd 는 **비상용으로 남겨 두었고**,
-> 전환을 확인한 뒤 정리합니다. 두 구현이 같은 행을 만드는지는 `tests/contracts.test.ts`
-> 가 저장소 루트 `contracts/desk/*.json` 으로 검사합니다 — 에이전트·웹도 같은 파일을 읽습니다.
+> 이 Mac 은 desk 를 읽지 않고 `monthly`·`list` 가 먼저 대시보드의 스냅샷을 내려받습니다
+> (`pull`). 이 도구의 `scan`·`push`·`requests` 는 **에이전트를 못 쓸 때의 비상용**입니다.
+> 두 구현이 같은 행을 만드는지는 `tests/contracts.test.ts` 가 저장소 루트
+> `contracts/desk/*.json` 으로 검사합니다 — 에이전트·웹도 같은 파일을 읽습니다.
 
 > **주간 보고서는 여기 없습니다.** 이슈트래커의 `태스크맵` 화면에서 만듭니다
 > (`web/src/lib/report/`). 집계 규칙을 두 벌 두면 갈라지기 때문에, 주간 쪽
-> 코드는 통째로 그쪽으로 옮겼습니다. 이 도구가 할 일은 그 화면이 볼 스냅샷을
-> 제때 올려 두는 것입니다.
+> 코드는 통째로 그쪽으로 옮겼습니다.
 서식은 `활동_월간요약보고서.pptx` (2026.07, PptxGenJS 생성 후 손질된 원본)를
 역설계한 것입니다. 그 파일 자체는 저장소에 없고, **좌표는 `src/layout.ts` 에
 상수로 옮겨져 있습니다** — 원본이 없어도 생성은 됩니다.
@@ -42,14 +41,17 @@ Node 22 이상이 필요합니다 (`node:sqlite` 를 씁니다).
 ## 명령
 
 ```bash
-npm run doctor            # 설정·연결·쿠키 만료 + **스냅샷 나이** 점검
-npm run scan              # desk 를 읽어 스냅샷 저장 + 대시보드 업로드
-npm run push              # 밀린 스냅샷만 올리기
-npm run requests          # 화면에서 들어온 수집 요청 처리 (감시 작업이 30초마다)
+npm run doctor            # 설정·대시보드·**스냅샷 나이**·에이전트의 마지막 수집 점검
+npm run pull              # 대시보드의 스냅샷 내려받기 (monthly·list 가 먼저 부릅니다)
 npm run monthly           # 지난달 보고서 생성
 npm run monthly 2026-08   # 특정 달
 npm run list              # 업무 전수 목록 xlsx (프로젝트별 · 담당자별)
-npm test                  # 집계·레이아웃·계약 247개 + 타입체크
+npm test                  # 집계·레이아웃·계약 262개 + 타입체크
+
+# 비상용 — 사내 PC 에이전트를 못 쓸 때만 (이 Mac 의 Chrome desk 쿠키가 필요합니다)
+npm run scan              # desk 를 읽어 스냅샷 저장 + 대시보드 업로드
+npm run push              # 밀린 스냅샷만 올리기
+npm run requests          # 화면에서 들어온 수집 요청 처리
 ```
 
 터미널을 안 쓸 때는 **`start-reporter.command` 를 더블클릭**합니다. Node 버전과
@@ -65,15 +67,21 @@ launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.plist
 launchctl kickstart -p gui/$UID/me.saebom.reporter   # 즉시 한 번
 ```
 
-월 18:00 · 화 09:00 스캔, 매월 1일 09:30 월간보고. 주간 구간이 화~월이라
-월요일이 끝나야 그 주가 닫히고, 그래서 두 번 뜹니다. 로그는 `data/reporter.log`.
+**매월 1일 09:30 월간보고만** 합니다. `monthly` 가 대시보드의 스냅샷을 먼저 내려받으므로
+이 Mac 의 desk 쿠키가 없어도 됩니다. 로그는 `data/reporter.log`.
 
-### 화면의 수집 요청 — 감시 작업 (30초마다)
+월 18:00 · 화 09:00 스캔은 2026-11-23 에 이 작업에서 뺐습니다 — 사내 PC 에이전트가 같은
+시각에 수집합니다. 그 전에는 Mac 의 스캔이 월간보고의 로컬 스냅샷을 채웠는데, 스캔을
+끄고 내려받기 없이 두면 **마지막 Mac 스캔으로 매달 조용히** 만들어졌을 것입니다.
+`pull` 이 실패하면 `monthly` 는 멈춥니다.
+
+### 화면의 수집 요청 — 감시 작업 (비상용 · 평소에는 해제)
 
 이슈트래커의 **주간보고서 생성**은 만들기 전에 desk 최신 현황을 받아 옵니다. 브라우저는
-desk 를 못 읽으므로 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장), 이 Mac 의 감시
-작업이 집어 가 **`npm run scan` 과 같은 함수**(`cli.ts` 의 `scanOnce`)로 스캔·업로드한
-뒤 결과를 적습니다. 화면은 최대 2분 기다립니다.
+desk 를 못 읽으므로 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장), **사내 PC
+에이전트가 10초마다** 집어 갑니다. 아래 Mac 감시 작업은 에이전트를 며칠 못 쓰게 됐을
+때만 붙입니다 — 요청을 집어 **`npm run scan` 과 같은 함수**(`cli.ts` 의 `scanOnce`)로
+스캔·업로드한 뒤 결과를 적습니다. 화면은 최대 2분 기다립니다.
 
 ```bash
 cp scripts/me.saebom.reporter.requests.plist ~/Library/LaunchAgents/
@@ -97,7 +105,7 @@ Documents 접근을 막아(TCC) `getcwd: Operation not permitted` 로 죽습니�
 홈 바로 밑(`~/PMS`)에 두는 편이 승인 없이 도는 길입니다. 옮기면 plist 의 경로
 세 곳(`ProgramArguments` · `WorkingDirectory` · 로그)을 같이 고쳐야 합니다.
 
-정기 실행이 걸려 있어도 **desk 쿠키 만료는 사람이 풉니다** (아래). 만료되면
+비상용 scan 을 쓸 때는 **desk 쿠키 만료를 사람이 풉니다** (아래). 만료되면
 스캔이 조용히 실패하고 대시보드는 묵은 스냅샷을 그대로 보여 주다가, 7일이
 넘으면 `npm run doctor` 가 실패로 셉니다.
 
@@ -311,12 +319,11 @@ cp scripts/me.saebom.reporter.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/me.saebom.reporter.plist
 ```
 
-월요일 18:00 `scan`(구간 마감 상태), 화요일 09:00 `scan`, 매월 1일 09:30 에
-지난달 `monthly` 를 돌립니다.
+매월 1일 09:30 에 지난달 `monthly` 를 돌립니다(`pull` 을 먼저 합니다).
 
-주간 구간이 화~월이라 **월요일이 끝나야 그 주가 닫힙니다.** 월요일 저녁 스캔이
-구간 마감 상태를 담고, 화요일 아침 스캔이 그것을 대시보드에 올립니다. 보고서
-자체는 이슈트래커에서 사람이 만듭니다.
+월요일 18:00 · 화요일 09:00 수집은 사내 PC 에이전트가 합니다. 주간 구간이 화~월이라
+**월요일이 끝나야 그 주가 닫힙니다.** 월요일 저녁 수집이 구간 마감 상태를 담고, 화요일
+아침 수집이 그 뒤 상태를 담습니다. 보고서 자체는 이슈트래커에서 사람이 만듭니다.
 
 > **스냅샷 나이가 곧 보고서가 밀린 정도입니다.** 주간 보고서는 대시보드에 올라간
 > 최신 스냅샷의 날짜로 구간을 정합니다 — 스냅샷이 여드레 늙으면 화면은 아무 말
@@ -327,8 +334,8 @@ launchctl load ~/Library/LaunchAgents/me.saebom.reporter.plist
 로그는 `data/reporter.log` 에 쌓입니다.
 
 > 노트북이 잠들어 있으면 launchd 는 **깨어난 직후** 밀린 작업을 한 번 돌립니다.
-> 주 1회 스캔을 놓쳐도 다음 스캔이 2주치를 한 번에 잡지만, 그 사이의 변화는
-> 뭉뚱그려집니다.
+> 1일을 놓쳐 2일에 돌아도 `monthly` 의 기본값(지난달)이 맞으므로 `run.sh` 는 날짜를
+> 보지 않습니다.
 
 ## 구조
 
@@ -345,9 +352,9 @@ src/xlsx.ts        xlsx 그리기 — 계산하지 않습니다
 src/cookie.ts      Chrome 쿠키 추출·복호화
 src/desk.ts        /api/state 수집·스냅샷
 src/dashboard.ts   Supabase 티켓 조회 (대분류 3종) · 태스크 맵 조회
-src/upload.ts      스냅샷 업로드
-src/requests.ts    화면의 수집 요청 큐 읽기·쓰기 + 판단(순수 함수)
-src/cli.ts         scan · push · requests · monthly · list · doctor
+src/upload.ts      스냅샷 업로드(비상용) · 내려받기(`toPull`·`snapshotFromRow` 순수 함수)
+src/requests.ts    화면의 수집 요청 큐 읽기·쓰기 + 판단(순수 함수) — 비상용
+src/cli.ts         pull · monthly · list · doctor · (비상용) scan · push · requests
 ```
 
 ## 서식을 고칠 때

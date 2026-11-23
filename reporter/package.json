@@ -10,6 +10,7 @@
   "scripts": {
     "scan": "tsx src/cli.ts scan",
     "push": "tsx src/cli.ts push",
+    "pull": "tsx src/cli.ts pull",
     "requests": "tsx src/cli.ts requests",
     "monthly": "tsx src/cli.ts monthly",
     "list": "tsx src/cli.ts list",

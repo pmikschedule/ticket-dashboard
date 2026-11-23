@@ -739,7 +739,28 @@ source_at·counts·키 구성·state 까지 같았습니다 ([HANDOFF](HANDOFF.m
 
 ### 전환하는 동안
 
-Mac 의 launchd(`me.saebom.reporter` · `.requests`)는 이번에 건드리지 않았습니다. 둘이
+Mac 의 launchd(`me.saebom.reporter` · `.requests`)는 처음에 건드리지 않았습니다. 둘이
 함께 돌아도 요청은 조건부 update 라 한쪽만 집고, 정기 수집은 둘 다 할 수 있지만 같은
-날은 늦게 뜬 쪽이 남습니다(같은 `to_upload` 규칙). 에이전트로 며칠 돌려 본 뒤 Mac 쪽을
-끄고 reporter 의 수집 부분을 정리합니다 — 별도 작업입니다.
+날은 늦게 뜬 쪽이 남습니다(같은 `to_upload` 규칙).
+
+### 전환 뒤 — Mac 은 월간보고만, 스냅샷은 내려받기 (2026-11-23)
+
+같은 날 에이전트의 확인 수집과 화면 요청 두 번(7초·6초)을 확인하고 Mac 쪽을 줄였습니다.
+
+- `.requests` 감시 작업은 해제. plist 는 **비상용**으로 저장소에 남깁니다
+- `me.saebom.reporter` 는 월·화 스캔을 빼고 **매월 1일 09:30 월간보고만**
+- 월간보고·업무 목록은 로컬 스냅샷(`latestSnapshot`·`previousDueDates`)을 읽습니다.
+  Mac 이 스캔을 멈추면 그 로컬이 마지막 Mac 스캔에서 멈추고, 보고서는 **멀쩡한 얼굴로
+  묵은 수집본**을 싣습니다. 그래서 `monthly`·`list` 가 먼저 대시보드의 스냅샷을 내려받습니다
+  (`pull` · `upload.toPull`). 방향이 바뀌어 **대시보드가 원본, 로컬이 사본**입니다
+- 내려받은 행은 `makeSnapshot` 을 다시 거쳐 파일로 씁니다 — 원본 시각은 표의 `source_at`
+  (Postgres 가 시간대를 붙인 것)이 아니라 state 의 `updatedAt` 그대로라서, 내려받은 것을
+  다시 행으로 만들면 계약 자료(`snapshot_rows.json`)의 행과 같습니다 (테스트)
+- **내려받기에 실패하면 월간보고가 멈춥니다.** 어차피 같은 대시보드에서 태스크 맵과
+  티켓을 읽어야 하므로 그쪽만 살아 있는 경우가 없습니다
+- reporter `doctor` 는 이 Mac 의 desk 쿠키를 **경고만** 하고(비상용 scan 에만 필요),
+  에이전트가 `app_settings` 에 적은 마지막 수집 결과를 보여 줍니다. 감시 작업 등록 여부는
+  더 보지 않습니다
+
+`scan`·`push`·`requests` 코드는 지우지 않았습니다. 에이전트를 며칠 못 쓰게 되면 그 Mac 의
+Chrome 으로 desk 에 로그인하고 `npm run scan` 하거나 `.requests` plist 를 다시 붙입니다.

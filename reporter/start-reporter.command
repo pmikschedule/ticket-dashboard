@@ -109,13 +109,13 @@ if grep -q 'sb_secret_' .env; then
 fi
 ok "reporter/.env"
 
-# 대시보드 계정이 없으면 스캔은 되지만 보고서의 운영 현황 절이 비어 버립니다.
-# 스캔까지 막지는 않습니다 — 스냅샷은 놓치면 복원이 안 되기 때문입니다.
+# 대시보드 계정이 없으면 내려받기·보고서·목록이 안 됩니다. 비상용 스캔(6번)은
+# 막지 않습니다 — 스냅샷은 놓치면 복원이 안 되기 때문입니다.
 DASHBOARD_READY=1
 if ! grep -qE '^SUPABASE_EMAIL=.+' .env || ! grep -qE '^SUPABASE_PASSWORD=.+' .env; then
   DASHBOARD_READY=0
   warn "SUPABASE_EMAIL / SUPABASE_PASSWORD 가 비어 있습니다 — 운영 집계를 못 읽습니다"
-  printf '  %s스캔은 그대로 됩니다. 보고서를 만들려면 .env 를 채우세요.%s\n' "$DIM" "$RESET"
+  printf '  %s비상 수집(6번)은 됩니다. 보고서를 만들려면 .env 를 채우세요.%s\n' "$DIM" "$RESET"
 fi
 
 # ── 3. 의존성 설치 ───────────────────────────────────────────────────────────
@@ -156,21 +156,22 @@ fi
 
 # ── 5. 메뉴 ──────────────────────────────────────────────────────────────────
 printf '\n%s무엇을 할까요?%s\n\n' "$BOLD" "$RESET"
-printf '  %s1%s  스냅샷 수집        %s주 1회 이상. 이걸 놓치면 그날은 복원되지 않습니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s1%s  스냅샷 내려받기    %s대시보드의 수집본을 이 Mac 으로. 2·3·4번은 알아서 먼저 합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
 printf '  %s2%s  지난달 보고서      %sout/ 에 pptx 를 만듭니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
 printf '  %s3%s  특정 달 보고서     %s월을 직접 입력합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
 printf '  %s4%s  업무 목록          %s프로젝트별·담당자별 전수 목록 xlsx. 자르지 않습니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
-printf '  %s5%s  점검               %s설정·연결·쿠키·스냅샷 나이를 봅니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s5%s  점검               %s설정·대시보드·스냅샷 나이·에이전트의 마지막 수집%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
+printf '  %s6%s  비상 수집          %s사내 PC 에이전트를 못 쓸 때만. 이 Mac 의 desk 쿠키가 필요합니다%s\n' "$BOLD" "$RESET" "$DIM" "$RESET"
 printf '\n%s  주간 보고서와 태스크 맵 편집은 이슈트래커의 [태스크맵] 화면에 있습니다.%s\n' "$DIM" "$RESET"
-printf '%s  여기서 1번을 돌려야 그 화면이 오늘 자료를 봅니다.%s\n' "$DIM" "$RESET"
+printf '%s  desk 수집은 사내 PC 의 에이전트가 합니다 (월 18:00 · 화 09:00 · 화면 요청).%s\n' "$DIM" "$RESET"
 printf '\n'
-printf '선택 [1-5, 그냥 Enter 는 1]: '
+printf '선택 [1-6, 그냥 Enter 는 1]: '
 read -r CHOICE
 CHOICE="${CHOICE:-1}"
 
 MONTH=''
 case "$CHOICE" in
-  1) ARGS=(scan) ;;
+  1) ARGS=(pull) ;;
   2) ARGS=(monthly) ;;
   3)
     printf '어느 달입니까? (예: 2026-07): '
@@ -183,12 +184,13 @@ case "$CHOICE" in
     ;;
   4) ARGS=(list) ;;
   5) ARGS=(doctor) ;;
-  *) die "1~5 중에서 고르세요. 입력한 값: $CHOICE" ;;
+  6) ARGS=(scan) ;;
+  *) die "1~6 중에서 고르세요. 입력한 값: $CHOICE" ;;
 esac
 
 # 보고서·목록은 **태스크 맵**을 대시보드에서 읽습니다. 계정이 없으면 맵 없이
 # 만들어지는 게 아니라 아예 멈춥니다 — 항목 구성이 조용히 달라지는 편이 나쁩니다.
-if [ "$DASHBOARD_READY" -eq 0 ] && { [ "${ARGS[0]}" = "monthly" ] || [ "${ARGS[0]}" = "list" ]; }; then
+if [ "$DASHBOARD_READY" -eq 0 ] && { [ "${ARGS[0]}" = "pull" ] || [ "${ARGS[0]}" = "monthly" ] || [ "${ARGS[0]}" = "list" ]; }; then
   die "보고서를 만들려면 대시보드 계정이 필요합니다." \
     "reporter/.env 의 SUPABASE_EMAIL / SUPABASE_PASSWORD 를 채운 뒤 다시 실행하세요." \
     "" \
@@ -203,7 +205,9 @@ step "실행 중… ${ARGS[*]}"
 # 쿠키는 macOS 키체인의 "Chrome Safe Storage" 키로 복호화합니다.
 # 처음 한 번은 시스템이 접근 허용을 묻습니다 — 그 창은 이 터미널이 아니라
 # 별도 대화상자로 뜹니다.
-printf '%s  (처음이라면 키체인 접근 허용을 묻는 창이 뜹니다. 허용해야 desk 를 읽습니다.)%s\n\n' "$DIM" "$RESET"
+if [ "${ARGS[0]}" = "scan" ] || [ "${ARGS[0]}" = "doctor" ]; then
+  printf '%s  (처음이라면 키체인 접근 허용을 묻는 창이 뜹니다. 허용해야 desk 를 읽습니다.)%s\n\n' "$DIM" "$RESET"
+fi
 
 "$TSX_BIN" src/cli.ts "${ARGS[@]}"
 STATUS=$?
@@ -216,13 +220,13 @@ if [ "$STATUS" -ne 0 ]; then
     die "점검에서 실패한 항목이 있습니다." \
       "위의 '실패' · '미설정' 줄이 사유입니다." \
       "" \
-      "  · 쿠키 만료  → Chrome 으로 desk 에 다시 로그인하면 끝입니다" \
-      "  · 대시보드   → .env 의 SUPABASE_EMAIL / SUPABASE_PASSWORD 를 채우세요"
+      "  · 대시보드   → .env 의 SUPABASE_EMAIL / SUPABASE_PASSWORD 를 채우세요" \
+      "  · 스냅샷 나이 → 사내 PC 에이전트가 떠 있는지 보세요 (설정 → desk 인증 카드)"
   fi
   die "실패했습니다 (종료코드 $STATUS)." \
-    "위 메시지를 먼저 보세요. 가장 흔한 원인은 쿠키 만료입니다." \
+    "위 메시지를 먼저 보세요." \
     "" \
-    "  · 쿠키 만료  → Chrome 으로 desk 에 다시 로그인하면 끝입니다" \
+    "  · 비상 수집(6번)의 쿠키 만료 → Chrome 으로 desk 에 다시 로그인합니다" \
     "  · 그 외      → 5번 점검을 돌려 보세요"
 fi
 

@@ -638,12 +638,21 @@ python run.py desk-scan             # 한 번 받아 대시보드에 올림
 | "스냅샷은 수집했지만 대시보드에 올리지 못했습니다" | 25.2 미적용이거나 Supabase 장애. 로컬 `data\desk-snapshots\` 에 남은 것은 다음 수집 때 다시 올라갑니다 |
 | 에이전트 콘솔에 "수집 요청 표가 DB 에 없습니다" (한 시간에 한 번) | 12-1 미적용 |
 
-### 12-5. Mac 의 reporter (비상용)
+### 12-5. Mac 의 reporter — 월간보고만 (수집은 비상용)
 
 전에는 Mac 의 reporter 가 같은 일을 했습니다(launchd `me.saebom.reporter` ·
-`me.saebom.reporter.requests`). **아직 그대로 두었습니다** — 둘이 함께 돌아도 한 요청은
-한 번만 처리되고 같은 날 스냅샷은 늦게 뜬 쪽이 남습니다. 에이전트로 며칠 돌려 본 뒤 Mac
-쪽을 끕니다(별도 작업). 에이전트를 못 쓸 때는 그 Mac 에서 `cd reporter && npm run scan`.
+`me.saebom.reporter.requests`). **2026-11-23 에 줄였습니다.**
+
+- `me.saebom.reporter` = **매월 1일 09:30 월간보고만**. 월·화 스캔은 뺐습니다.
+  `monthly` 가 먼저 대시보드의 스냅샷을 내려받으므로(`npm run pull`) Mac 의 desk 쿠키가
+  없어도 됩니다. 저장소의 plist 를 다시 복사해 등록하면 이 구성이 됩니다:
+  ```bash
+  P=~/Library/LaunchAgents/me.saebom.reporter.plist
+  launchctl unload "$P"; cp reporter/scripts/me.saebom.reporter.plist "$P"; launchctl load "$P"
+  ```
+- `me.saebom.reporter.requests` = 해제. 에이전트를 며칠 못 쓰게 됐을 때만 다시 붙입니다
+- 에이전트를 못 쓸 때 한 번 수집: 그 Mac 의 Chrome 으로 desk 에 로그인한 뒤
+  `cd reporter && npm run scan`
 
 ---
 

@@ -1,6 +1,10 @@
 #!/usr/bin/env -S npx tsx
 /**
- * CLI — `doctor` · `scan` · `push` · `requests` · `monthly` · `list`.
+ * CLI — `doctor` · `pull` · `monthly` · `list` · (비상용) `scan` · `push` · `requests`.
+ *
+ * **desk 수집은 2026-11-23 부터 사내 PC 의 에이전트가 합니다.** 이 Mac 은 대시보드에
+ * 올라간 스냅샷을 내려받아(`pull`) 월간보고·업무 목록을 만듭니다. `scan`·`push`·
+ * `requests` 는 에이전트를 못 쓸 때를 위한 비상용입니다.
  *
  * **주간 보고서는 여기 없습니다.** 이슈트래커의 태스크맵 화면에서 만듭니다
  * (`web/src/lib/report/`). 집계 규칙을 두 벌 두지 않기 위해서입니다.
@@ -9,15 +13,15 @@
  * 읽기만 합니다 (`dashboard.fetchTaskMap`). 편집이 양쪽에 있으면 한쪽이 다른 쪽을
  * 소리 없이 덮어씁니다 — 실제로 그럴 뻔했습니다.
  *
- *   scan             desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
- *   push             밀린 스냅샷을 대시보드에 올립니다 (scan 없이)
- *   requests         화면에서 들어온 수집 요청을 처리합니다 (감시 작업이 30초마다 부릅니다)
+ *   pull             대시보드의 스냅샷을 이 Mac 으로 내려받습니다 (monthly·list 가 먼저 부릅니다)
  *   monthly [YYYY-MM] 그 달의 보고서 pptx 를 만듭니다 (기본: 지난달)
  *   list             업무 전수 목록 xlsx 를 만듭니다 (프로젝트별 · 담당자별)
- *   doctor           설정·연결·쿠키 만료를 점검합니다
+ *   doctor           설정·대시보드·에이전트의 수집 상태를 점검합니다
+ *   scan             (비상용) desk 를 읽어 오늘자 스냅샷을 남기고 대시보드에 올립니다
+ *   push             (비상용) 밀린 스냅샷을 대시보드에 올립니다 (scan 없이)
+ *   requests         (비상용) 화면에서 들어온 수집 요청을 처리합니다
  */
 
-import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createClient } from '@supabase/supabase-js'
@@ -40,7 +44,7 @@ import { TABLE } from './layout.ts'
 import { writeReport } from './render.ts'
 import { buildWorkList, summarizeByOwner } from './worklist.ts'
 import { applyTaskMap, mapFootnotes, type TaskMap } from './taskmap.ts'
-import { toUpload, uploadSnapshot, uploadedDays } from './upload.ts'
+import { downloadSnapshot, toPull, toUpload, uploadSnapshot, uploadedDays } from './upload.ts'
 import {
   SCAN_TIMEOUT_MS,
   claimPending,
@@ -53,14 +57,11 @@ import {
   type WarnStamp,
 } from './requests.ts'
 import { writeWorkList } from './xlsx.ts'
-import type { TicketRow } from './types.ts'
+import { DESK_SETTING_KEYS, type TicketRow } from './types.ts'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const cfg = loadConfig()
 const host = new URL(cfg.deskUrl).host
-
-/** 화면의 수집 요청을 처리하는 launchd 감시 작업 (scripts/me.saebom.reporter.requests.plist) */
-const REQUESTS_JOB = 'me.saebom.reporter.requests'
 
 function say(s = '') {
   process.stdout.write(`${s}\n`)
@@ -76,17 +77,22 @@ function fail(e: unknown): never {
   process.exit(1)
 }
 
-/** 쿠키를 잡고 만료를 알립니다. **만료 임박을 조용히 넘기지 않습니다.** */
+/**
+ * 이 Mac 의 desk 쿠키를 잡고 만료를 알립니다. 비상용 `scan`·`requests` 에만 씁니다 —
+ * 평소 수집은 사내 PC 에이전트가 설정 화면의 쿠키로 합니다.
+ */
 function cookieOrDie() {
   const hit = resolveCookie(host, cfg.cfAuthorization, cfg.chromeProfile)
   const left = daysLeft(hit.expiresAt)
-  const when = hit.expiresAt.toISOString().slice(0, 16).replace('T', ' ')
+  const when = `${hit.expiresAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
   if (left < 0) {
-    throw new Error(`쿠키가 ${when} 에 만료됐습니다. Chrome 으로 desk 에 다시 로그인하세요.`)
+    throw new Error(
+      `이 Mac 의 desk 쿠키가 ${when} 에 만료됐습니다. 비상용 scan 이 필요할 때만 Chrome 으로 desk 에 다시 로그인하세요.`,
+    )
   }
   say(`  쿠키   : ${hit.profile} · 만료 ${when} (${left}일 남음)`)
   if (left <= 7) {
-    say(`  ⚠ 만료가 ${left}일 남았습니다. Chrome 으로 desk 에 다시 로그인해 두세요.`)
+    say(`  ⚠ 만료가 ${left}일 남았습니다 — 비상용 scan 에만 필요합니다. 평소에는 다시 로그인하지 않아도 됩니다.`)
   }
   return hit
 }
@@ -191,6 +197,40 @@ async function pushAll(opt: { quiet?: boolean; client?: SupabaseClient } = {}): 
 async function cmdPush() {
   say('대시보드 업로드')
   await pushAll()
+}
+
+/**
+ * 대시보드 → 이 Mac. 로컬에 없거나 대시보드 것이 더 늦게 뜬 날짜만 받습니다 (`toPull`).
+ *
+ * **실패하면 멈춥니다.** 월간보고·목록이 이걸 먼저 부르는데, 못 받은 채 진행하면
+ * 묵은 로컬 스냅샷으로 멀쩡해 보이는 보고서가 나옵니다. 어차피 둘 다 대시보드에서
+ * 태스크 맵과 티켓을 읽어야 하므로, 여기서 못 붙으면 그쪽도 못 붙습니다.
+ */
+async function pullAll(client: SupabaseClient | null): Promise<void> {
+  if (!client) {
+    throw new Error('대시보드 설정이 없어 스냅샷을 내려받을 수 없습니다 (.env 의 SUPABASE_*)')
+  }
+  const remote = await uploadedDays(client)
+  const local = listSnapshots(cfg.snapshotDir).map((file) => ({
+    file,
+    scannedAt: readSnapshot(cfg.snapshotDir, file).meta.scannedAt,
+  }))
+  const days = toPull(local, remote)
+  for (const day of days) {
+    saveSnapshot(cfg.snapshotDir, await downloadSnapshot(client, day))
+  }
+  const newest = [...remote.keys()].sort().pop()
+  say(
+    days.length > 0
+      ? `  내려받기: 스냅샷 ${days.length}개 (${days[0]}${days.length > 1 ? ` ~ ${days[days.length - 1]}` : ''})`
+      : `  내려받기: 새 스냅샷 없음 (대시보드 최신 ${newest ?? '없음'})`,
+  )
+}
+
+async function cmdPull() {
+  say('대시보드 스냅샷 내려받기')
+  await pullAll(await connect())
+  say(`  누적   : 스냅샷 ${listSnapshots(cfg.snapshotDir).length}개`)
 }
 
 /** 같은 경고를 30초마다 찍지 않기 위한 표시. data/ 는 저장소에 안 올라갑니다 */
@@ -340,13 +380,14 @@ async function cmdMonthly(argMonth?: string) {
 
   say(`활동 월간 요약 보고서 — ${year}.${m[2]}`)
 
+  const client = await connect()
+  await pullAll(client)
   const snap = latestSnapshot(cfg.snapshotDir)
   if (!snap) {
-    throw new Error('스냅샷이 없습니다. 먼저 `npm run scan` 을 한 번 실행하세요.')
+    throw new Error('스냅샷이 없습니다. 대시보드에도 없으면 사내 PC 에이전트의 desk 수집을 확인하세요.')
   }
   say(`  스냅샷 : ${snap.meta.scannedAt.slice(0, 10)} (work ${snap.meta.counts.work})`)
 
-  const client = await connect()
   const map = await requireTaskMap(client)
   const { list: tickets, warning } = await loadTickets(client)
   if (warning) say(`  ⚠ ${warning}`)
@@ -411,14 +452,17 @@ async function cmdMonthly(argMonth?: string) {
  * 보고서와 다르면 대조가 안 됩니다.
  */
 async function cmdList() {
+  say('업무 목록')
+  const client = await connect()
+  await pullAll(client)
   const snap = latestSnapshot(cfg.snapshotDir)
   if (!snap) {
-    throw new Error('스냅샷이 없습니다. 먼저 `npm run scan` 을 한 번 실행하세요.')
+    throw new Error('스냅샷이 없습니다. 대시보드에도 없으면 사내 PC 에이전트의 desk 수집을 확인하세요.')
   }
   const asOf = snap.meta.scannedAt.slice(0, 10)
-  say(`업무 목록 — 기준일 ${asOf}`)
+  say(`  기준일 : ${asOf}`)
 
-  const map = await requireTaskMap(await connect())
+  const map = await requireTaskMap(client)
   const m3 = mapped(snap.state, map)
   const groups = buildWorkList(m3.state, asOf)
   const owners = summarizeByOwner(groups)
@@ -450,13 +494,15 @@ async function cmdDoctor() {
   say(`  출력   : ${cfg.outDir}`)
 
   let ok = true
+  // 이 Mac 의 desk 쿠키는 비상용 `scan` 에만 씁니다. 수집은 사내 PC 에이전트가 하므로
+  // 여기 실패는 **경고만** 합니다 — 쿠키가 만료됐다고 월간보고 점검까지 실패로 세면
+  // 진짜 문제(대시보드·스냅샷)가 묻힙니다.
   try {
     const hit = cookieOrDie()
     const r = await fetchState(cfg.deskUrl, hit.value)
-    say(`  desk 연결: OK — ${r.state.work.length}건 (${r.email ?? '?'})`)
+    say(`  desk 연결: OK — ${r.state.work.length}건 (${r.email ?? '?'}) · 비상용 scan 가능`)
   } catch (e) {
-    ok = false
-    say(`  desk 연결: 실패 — ${e instanceof Error ? e.message : e}`)
+    say(`  desk 연결: ⚠ 이 Mac 에서는 안 됨 (비상용 scan 에만 필요) — ${e instanceof Error ? e.message : e}`)
   }
 
   try {
@@ -481,16 +527,33 @@ async function cmdDoctor() {
       const newest = days[days.length - 1]
       if (!newest) {
         ok = false
-        say('  스냅샷   : 대시보드에 없음 — `npm run scan` 을 한 번 돌리세요')
+        say('  스냅샷   : 대시보드에 없음 — 사내 PC 에이전트의 desk 수집을 확인하세요')
       } else {
         const age = daysBetween(newest, todayIso())
         say(`  스냅샷   : 대시보드 최신 ${newest} (${age}일 전) · ${days.length}개`)
         if (age >= 7) {
           ok = false
           say(
-            `  ⚠ 스냅샷이 ${age}일 지났습니다. 주간 보고서가 지난 구간으로 만들어집니다 — \`npm run scan\` 을 돌리세요.`,
+            `  ⚠ 스냅샷이 ${age}일 지났습니다. 주간 보고서가 지난 구간으로 만들어집니다 — 사내 PC 에이전트를 확인하세요 (비상시 \`npm run scan\`).`,
           )
         }
+      }
+
+      // 수집하는 쪽(에이전트)이 적어 둔 상태 — 비밀이 아닌 것만 있습니다
+      const { data, error } = await client.from('app_settings').select('key, value').like('key', 'desk_%')
+      if (error) throw new Error(`desk 상태를 못 읽었습니다: ${error.message}`)
+      const v = new Map((data as { key: string; value: string | null }[]).map((r) => [r.key, r.value]))
+      const at = v.get(DESK_SETTING_KEYS.last_scan_at)
+      const expires = v.get(DESK_SETTING_KEYS.cookie_expires_at)
+      if (!at) {
+        say('  에이전트: desk 수집 기록 없음 — 사내 PC 에이전트(0.5.0 이상)·설정 화면의 desk 인증을 확인하세요')
+      } else {
+        const good = v.get(DESK_SETTING_KEYS.last_scan_ok) === 'true'
+        say(
+          `  에이전트: 마지막 수집 ${at.slice(0, 16).replace('T', ' ')}Z ${good ? '성공' : '⚠ 실패'} — ` +
+            `${v.get(DESK_SETTING_KEYS.last_scan_note) ?? ''} (인증 ${v.get(DESK_SETTING_KEYS.auth_source) ?? '?'}` +
+            `${expires ? ` · 만료 ${expires.slice(0, 10)}` : ''})`,
+        )
       }
     }
   } catch (e) {
@@ -498,7 +561,8 @@ async function cmdDoctor() {
     say(`  대시보드 : 실패 — ${e instanceof Error ? e.message : e}`)
   }
 
-  // 화면의 '주간보고서 생성' 이 먼저 최신 현황을 받아 오려면 표와 감시 작업이 둘 다 있어야 합니다
+  // 화면의 '주간보고서 생성' 이 먼저 최신 현황을 받아 오려면 이 표가 있어야 합니다.
+  // 요청을 집어 가는 것은 사내 PC 에이전트입니다 — 이 Mac 의 감시 작업은 11/23 에 껐습니다
   try {
     if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) throw new Error('대시보드 설정 없음')
     const anon = createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
@@ -509,13 +573,6 @@ async function cmdDoctor() {
   } catch (e) {
     ok = false
     say(`  수집요청 : 실패 — ${readableError(e)}`)
-  }
-  try {
-    execFileSync('launchctl', ['list', REQUESTS_JOB], { stdio: 'ignore' })
-    say(`  감시작업 : ${REQUESTS_JOB} 등록됨`)
-  } catch {
-    ok = false
-    say(`  감시작업 : ${REQUESTS_JOB} 이 등록되지 않았습니다 — 화면의 수집 요청이 처리되지 않습니다 (README '정기 실행')`)
   }
 
   say(ok ? '\n전부 정상입니다.' : '\n일부 점검이 실패했습니다.')
@@ -529,6 +586,7 @@ try {
   else if (cmd === 'monthly') await cmdMonthly(arg)
   else if (cmd === 'list') await cmdList()
   else if (cmd === 'push') await cmdPush()
+  else if (cmd === 'pull') await cmdPull()
   else if (cmd === 'requests') {
     await cmdRequests()
     // 상한에 걸린 스캔은 밑에서 아직 매달려 있을 수 있습니다 (fetch·키체인).
@@ -536,7 +594,7 @@ try {
     process.exit(process.exitCode ?? 0)
   } else if (cmd === 'doctor') await cmdDoctor()
   else {
-    say('사용법: reporter <scan|push|requests|monthly [YYYY-MM]|list|doctor>')
+    say('사용법: reporter <pull|monthly [YYYY-MM]|list|doctor|scan|push|requests>')
     process.exit(2)
   }
 } catch (e) {

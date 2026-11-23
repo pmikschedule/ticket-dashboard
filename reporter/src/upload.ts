@@ -11,7 +11,8 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { Snapshot } from './types.ts'
+import { makeSnapshot } from './desk.ts'
+import type { DeskState, Snapshot } from './types.ts'
 
 /** 표에 들어갈 모양. 순수 변환이라 테스트로 못박습니다 */
 export interface SnapshotRow {
@@ -106,4 +107,72 @@ export function toUpload(
       return Date.parse(scannedAt) > Date.parse(up)
     })
     .map((l) => l.file)
+}
+
+/*
+ * ---------------------------------------------------------------------------
+ * 내려받기 — 대시보드 → 이 Mac (2026-11-23 부터)
+ *
+ * desk 수집이 사내 PC 의 에이전트로 옮겨 가서 이 Mac 은 더 이상 desk 를 읽지
+ * 않습니다. 그런데 월간보고·업무 목록은 **로컬 스냅샷**(`latestSnapshot`·
+ * `previousDueDates`)을 읽습니다. 그대로 두면 Mac 의 마지막 스캔(11/25) 것으로
+ * 매달 조용히 만들어집니다 — 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다.
+ * 그래서 만들기 전에 대시보드 것을 내려받아 로컬을 채웁니다.
+ * 이제는 **대시보드가 원본이고 로컬이 사본**입니다 (`toUpload` 의 반대 방향).
+ * ---------------------------------------------------------------------------
+ */
+
+/**
+ * 내려받을 날짜 — 로컬에 **없거나, 있어도 대시보드 것이 더 늦게 뜬** 것.
+ *
+ * `toUpload` 와 같은 규칙을 거꾸로 씁니다. 하루 한 개(날짜가 키)라 같은 날
+ * 에이전트가 다시 수집하면 대시보드 것이 더 늦습니다. 시각은 시점으로 비교합니다
+ * (`Z` 와 `+00:00` 이 섞여 옵니다).
+ */
+export function toPull(
+  local: { file: string; scannedAt: string }[],
+  remote: Map<string, string>,
+): string[] {
+  const mine = new Map(local.map((l) => [l.file.slice(0, 10), l.scannedAt]))
+  return [...remote.entries()]
+    .filter(([day, scannedAt]) => {
+      const have = mine.get(day)
+      if (!have) return true
+      return Date.parse(scannedAt) > Date.parse(have)
+    })
+    .map(([day]) => day)
+    .sort()
+}
+
+/**
+ * 행 → 스냅샷. `snapshotRow` 의 반대입니다.
+ *
+ * `makeSnapshot` 을 그대로 거칩니다 — 건수는 state 에서 다시 세고, 원본 시각은
+ * state 의 `updatedAt` 그대로 둡니다. 표의 `source_at` 은 Postgres 가 시간대를 붙여
+ * 돌려주므로(`2026-11-20T14:28:34+00:00`) 그것을 쓰면 로컬 파일과 모양이 달라집니다.
+ * 스캔 시각은 밀리초+Z 로 맞춥니다 (`contracts/desk` 의 규칙).
+ */
+export function snapshotFromRow(row: { scanned_at: string; state: unknown }): Snapshot {
+  const at = new Date(row.scanned_at)
+  if (Number.isNaN(at.getTime())) {
+    throw new Error(`스냅샷 시각을 읽을 수 없습니다: ${row.scanned_at}`)
+  }
+  const state = row.state as DeskState | null
+  if (!state || !Array.isArray(state.work)) {
+    throw new Error(`스냅샷 본문에 업무 목록이 없습니다 (${row.scanned_at})`)
+  }
+  return makeSnapshot(state, at)
+}
+
+/** 그 날의 스냅샷 한 개를 내려받습니다. 본문(수백 KB)은 필요한 날짜만 받습니다 */
+export async function downloadSnapshot(client: SupabaseClient, day: string): Promise<Snapshot> {
+  const { data, error } = await client
+    .from('desk_snapshots')
+    .select('scanned_at, state')
+    .eq('day', day)
+    .single()
+  if (error) {
+    throw new Error(`스냅샷 내려받기 실패 (${day}): ${error.message}`)
+  }
+  return snapshotFromRow(data as { scanned_at: string; state: unknown })
 }

@@ -21,7 +21,7 @@ supabase/schema.sql   테이블 8개 + RLS + Storage + 통계 뷰 (한 파일, �
 agent/                Local PC 에이전트 (Python) — 메일 수집·분류·적재, 완료 회신 발송, desk 수집
 contracts/desk/       desk 수집 규칙의 공통 기준 자료 (가상) — agent·web·reporter 테스트가 함께 읽음
 web/                  React 대시보드 — 칸반·리스트·상세·통계·태스크맵
-reporter/             desk 수집기 + 월간 보고서 (Node) — 주간은 web 이 만듭니다
+reporter/             월간 보고서·업무 목록 (Node) + 비상용 desk 수집기 — 주간은 web 이 만듭니다
 ```
 
 `reporter/` 는 이 시스템의 일부가 아니라 **이 시스템에 붙어 사는 도구**입니다.
@@ -36,9 +36,11 @@ reporter/             desk 수집기 + 월간 보고서 (Node) — 주간은 web
 **desk 수집은 2026-11-23 부터 에이전트가 합니다** (0.5.0 · `run` 의 desk 스레드 ·
 [docs/DESIGN.md](docs/DESIGN.md) 14장). 관리자가 설정 화면에 붙여 넣은 desk 쿠키로
 정기 수집(월 18:00 · 화 09:00)과 주간보고서 화면의 수집 요청을 처리해
-`desk_snapshots` 에 올립니다. reporter 의 `scan`·`requests` 는 **비상용**으로 남아
+`desk_snapshots` 에 올립니다. reporter 의 `scan`·`push`·`requests` 는 **비상용**으로 남아
 있습니다 — 그쪽은 관리자 계정으로 로그인해 RLS 를 통과하고, 에이전트는 원래대로
-service_role 입니다. 전환을 확인한 뒤 Mac 의 launchd 를 끄고 정리합니다(별도 작업).
+service_role 입니다. 11/23 전환을 확인하고 Mac 의 launchd 는 **매월 1일 월간보고만**
+남겼습니다. 월간보고·업무 목록은 먼저 대시보드의 스냅샷을 내려받습니다(`pull`) —
+안 받으면 마지막 Mac 스캔의 묵은 수집본으로 멀쩡해 보이는 보고서가 나옵니다.
 
 ## 절대 규칙
 
@@ -234,13 +236,14 @@ cd agent    && ticket-agent doctor         # 설정·연결 점검 (desk 줄은 
 cd agent    && ticket-agent desk-scan --dry-run   # desk 받기·행 만들기만 (업로드 안 함)
 cd agent    && ticket-agent desk-scan      # desk 1회 수집 + 업로드
 python3 agent/tools/build_offline_bundle.py --src-only   # 사내 PC 용 src zip
-cd reporter && npm test                    # 집계·레이아웃·계약 247개 + 타입체크
-cd reporter && npm run doctor              # (비상용) 설정·연결·쿠키 + 스냅샷 나이 점검
+cd reporter && npm test                    # 집계·레이아웃·계약 262개 + 타입체크
+cd reporter && npm run doctor              # 대시보드·스냅샷 나이·에이전트 마지막 수집 점검 (Mac 쿠키는 경고만)
+cd reporter && npm run pull                # 대시보드 스냅샷 내려받기 (monthly·list 가 먼저 부름)
+cd reporter && npm run monthly             # 지난달 보고서 pptx
+cd reporter && npm run list                # 업무 전수 목록 xlsx
 cd reporter && npm run scan                # (비상용) desk 스냅샷 + 대시보드 업로드
 cd reporter && npm run push                # (비상용) 밀린 스냅샷만 올리기
 cd reporter && npm run requests            # (비상용) 화면의 수집 요청 처리
-cd reporter && npm run monthly             # 지난달 보고서 pptx
-cd reporter && npm run list                # 업무 전수 목록 xlsx
 ```
 
 ## 용어
