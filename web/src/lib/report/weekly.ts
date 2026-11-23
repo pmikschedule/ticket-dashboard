@@ -29,16 +29,16 @@ function projectProgress(project: DeskProject | undefined): number | null {
   return Math.round((ms.filter((m) => m.done).length / ms.length) * 100)
 }
 
-/**
- * 업무 행에 찍을 진척율. 완료는 100%, 그 외는 desk 값 그대로, 없으면 비웁니다.
- * `work.progress` 는 실측 38건 전부 비어 있어 업무 단위로는 산출이 안 됩니다.
- */
-function rowProgress(work: DeskWork, done: boolean): number | null {
-  if (done) return 100
-  return typeof work.progress === 'number' ? work.progress : null
-}
 import { mergedLabel } from './apply'
 import { briefText, clampText, listLine, wrapLines } from './clamp'
+import {
+  holidaySet,
+  inProgressBySchedule,
+  progressOf,
+  scheduleWindow,
+  type RowProgress,
+  type ScheduleWindow,
+} from './schedule'
 import { projectRails, type ProjectRail } from './milestones'
 import { summarizeOps, type OpsSummary, type ReportTicket } from './ops'
 import { inWeek, rangeLabel, type Week } from './week'
@@ -55,8 +55,20 @@ export interface WeeklyRow {
   owner: string
   detail: string
   chip: WeeklyChip
-  /** 완료 100%, 그 외는 desk `work.progress`. 없으면 null — 비웁니다 */
+  /**
+   * 완료 100% → desk 입력값(`work.progress`) → 일정 추정(`schedule.progressOf`).
+   * 셋 다 없으면 null — 비웁니다
+   */
   progress: number | null
+  /** 진척율이 일정 경과로 **추정**한 값이면 true. 진행사항 칸이 '약 N%' 로 밝힙니다 */
+  estimated?: boolean
+  /**
+   * 진행사항이 업무 자신의 글일 때 뒤에 덧붙일 진척 메모 (`진행 중 · 진척률 약 56%`).
+   * 칸(두 줄)에 들어갈 때만 붙입니다 — `briefRow`
+   */
+  appendNote?: string
+  /** 진행사항이 업무의 글이 아니라 진척 메모뿐이면 true. 묶음 행이 범위로 모읍니다 */
+  noteOnly?: boolean
   /** `8/6` · `7/13 → 8/6`(금주 변경) · `9/18 완료` · `(계획)` */
   schedule: string
   /**
@@ -231,9 +243,39 @@ export function lateAsOf(week: Week, reportedOn: string): string {
   return reportedOn < week.to ? reportedOn : week.to
 }
 
-function chipOf(w: DeskWork, d: WorkDiff, asOf: string): WeeklyChip {
+/**
+ * 일정 판단의 기준 — **보고일**(구간 마감보다 늦으면 구간 마감)과 desk 휴일.
+ *
+ * 지연 판정(`asOf`)은 스냅샷 날 기준이고 이것은 보고일 기준입니다. 최신 수집본으로
+ * 만들면 둘이 같습니다. 옛 수집본으로 만들면(스냅샷 < 보고일) 그 사이에 마감이 든
+ * 일은 지연도 진행 창도 아니게 됩니다 — 그때는 desk 상태대로 나갑니다.
+ */
+export interface ScheduleCtx {
+  ref: string
+  holidays: Set<string>
+}
+
+function scheduleCtx(state: DeskState, ref: string): ScheduleCtx {
+  return { ref, holidays: holidaySet(state.holidays) }
+}
+
+function windowOf(w: DeskWork, ctx: ScheduleCtx): ScheduleWindow {
+  // desk 에 등록일 필드가 없습니다 (2026-11-23 실측). 생기면 여기서 넘깁니다
+  return scheduleWindow(w, ctx.ref, ctx.holidays, null)
+}
+
+/**
+ * 상태 칩.
+ *
+ * **일정 창 안이면 진행중입니다** (2026-11-23 요청: "마감시한이 보고서를 작성하는
+ * 중에 있을 때는 진행 중으로 기록"). 완료가 아니고 `시작일 ≤ 보고일 ≤ 마감일` 이면
+ * desk 가 대기여도, 이번 주에 새로 생겼거나 착수했어도 '진행중' 입니다 — 착수·신규
+ * 칩은 일정 창 밖(시작 전·마감 없음)의 일에만 남습니다. 지연·완료가 먼저입니다.
+ */
+function chipOf(w: DeskWork, d: WorkDiff, asOf: string, win: ScheduleWindow): WeeklyChip {
   if (w.status === 'done') return 'done'
   if (w.due && w.due < asOf) return 'late'
+  if (inProgressBySchedule(w, win)) return 'ing'
   if (d.started.has(w.id)) return 'started'
   if (d.added.has(w.id)) return 'new'
   return 'ing'
@@ -272,7 +314,14 @@ function scheduleOf(w: DeskWork, changedFrom: string | null): string {
  * 보고서에도 안 나옵니다.** 실측 38건 중에도 `done` 인데 완료일이 빈 건이 있습니다.
  * 비교 대상이 없는 첫 주차에만 완료일로 판정합니다 — 그때는 전이를 볼 수 없습니다.
  */
-function pick(state: DeskState, d: WorkDiff, week: Week, asOf: string, hasBaseline: boolean): DeskWork[] {
+function pick(
+  state: DeskState,
+  d: WorkDiff,
+  week: Week,
+  asOf: string,
+  hasBaseline: boolean,
+  ctx: ScheduleCtx,
+): DeskWork[] {
   return state.work.filter((w) => {
     // 보류는 파이프라인의 단계가 아니라 옆길입니다. 표에서 빼고 3장으로 올립니다
     // (`heldRows`). 진행중에 섞으면 멈춰 있는 일이 '일하고 있는 것' 으로 읽힙니다.
@@ -282,6 +331,8 @@ function pick(state: DeskState, d: WorkDiff, week: Week, asOf: string, hasBaseli
       return hasBaseline ? d.done.has(w.id) : inWeek(w.completedOn, week)
     }
     if (w.status === 'ing') return true
+    // 대기여도 일정 창 안이면 진행 중인 일입니다 (`chipOf`)
+    if (inProgressBySchedule(w, windowOf(w, ctx))) return true
     return Boolean(w.due && w.due < asOf)
   })
 }
@@ -309,12 +360,35 @@ function pick(state: DeskState, d: WorkDiff, week: Week, asOf: string, hasBaseli
  * 각주가 밝힙니다).
  */
 function detailText(w: DeskWork, project: DeskProject | undefined, asOf: string): string {
-  const own =
+  return ownText(w, asOf) || (project?.current ?? '').trim()
+}
+
+/** 업무 자신의 글 — 진행 기록 → 메모 → 맵의 진행 내용 → 분석. 프로젝트 글은 빼고 */
+function ownText(w: DeskWork, asOf: string): string {
+  return (
     latestLog(w, asOf) ||
     (w.detail?.notes ?? '').trim() ||
     (w.assessment ?? '').trim() ||
     (w.detail?.analysis ?? '').trim()
-  return own || (project?.current ?? '').trim()
+  )
+}
+
+const NOTE_WORD: Record<Exclude<WeeklyChip, 'done'>, string> = {
+  ing: '진행 중',
+  late: '지연',
+  started: '착수',
+  new: '신규',
+}
+
+/**
+ * 진척 메모 — `진행 중 · 진척률 약 56%`. 진척률이 없거나 완료면 빈 문자열.
+ *
+ * 추정치에는 **'약'** 을 붙입니다. 일정이 지난 만큼이지 일이 된 만큼이 아니라서,
+ * desk 에 사람이 넣은 값(`진척률 30%`)과 같은 모양이면 실측으로 읽힙니다.
+ */
+export function progressNote(chip: WeeklyChip, p: RowProgress): string {
+  if (chip === 'done' || p.value === null) return ''
+  return `${NOTE_WORD[chip]} · 진척률 ${p.estimated ? '약 ' : ''}${p.value}%`
 }
 
 /**
@@ -348,8 +422,7 @@ function latestLogEntry(w: DeskWork, asOf: string): { at: string; body: string }
 }
 
 /** 통합 항목이면 '구성 2/3' 을 앞에 답니다 — 진척율이 무엇을 센 값인지 밝힙니다 */
-function withMergedLabel(w: DeskWork, project: DeskProject | undefined, asOf: string): string {
-  const text = detailText(w, project, asOf)
+function withMergedLabel(w: DeskWork, text: string): string {
   const label = mergedLabel(w)
   if (!label) return text
   return text ? `${label} · ${text}` : label
@@ -360,22 +433,39 @@ function detailDate(w: DeskWork, asOf: string): string | null {
   return latestLogEntry(w, asOf)?.at || null
 }
 
+/**
+ * 행 하나.
+ *
+ * 진행사항 칸: 업무 자신의 글이 있으면 그 글이 먼저이고 진척 메모는 칸에 들어갈 때만
+ * 뒤에 붙습니다(`briefRow`). 자신의 글이 없으면 **진척 메모**(`진행 중 · 진척률 약 56%`)
+ * 가 그 자리를 채웁니다 — 프로젝트에서 빌려 온 글보다 그 업무의 사실이 먼저입니다.
+ * 둘 다 없을 때만 프로젝트 글을 빌립니다 (`detailText`).
+ */
 function toRow(
   w: DeskWork,
   d: WorkDiff,
   asOf: string,
   project: DeskProject | undefined,
+  ctx: ScheduleCtx,
 ): WeeklyRow {
   const changedFrom = d.dueChangedFrom.get(w.id) ?? null
-  const chip = chipOf(w, d, asOf)
+  const win = windowOf(w, ctx)
+  const chip = chipOf(w, d, asOf, win)
+  const prog = progressOf(w, chip === 'done', win)
+  const note = progressNote(chip, prog)
+  const own = ownText(w, asOf)
+  const text = own || note || detailText(w, project, asOf)
   return {
     id: w.id,
     title: w.title,
     owner: (w.owner ?? '').trim() || '—',
-    detail: withMergedLabel(w, project, asOf),
+    detail: withMergedLabel(w, text),
     detailAt: detailDate(w, asOf),
     chip,
-    progress: rowProgress(w, chip === 'done'),
+    progress: prog.value,
+    ...(prog.estimated ? { estimated: true } : {}),
+    ...(own && note ? { appendNote: note } : {}),
+    ...(!own && note ? { noteOnly: true } : {}),
     schedule: scheduleOf(w, changedFrom),
     date: w.status === 'done' ? (w.completedOn ?? w.due) : w.due,
     due: w.due,
@@ -432,9 +522,12 @@ export function groupWork(
   week: Week,
   asOf: string,
   hasBaseline = false,
+  /** 일정 판단 기준일(보고일). 없으면 `asOf` */
+  ref: string = asOf,
 ): WeeklyGroup[] {
   const projects = new Map<string, DeskProject>(state.projects.map((p) => [p.key, p]))
-  const picked = pick(state, d, week, asOf, hasBaseline)
+  const ctx = scheduleCtx(state, ref)
+  const picked = pick(state, d, week, asOf, hasBaseline, ctx)
 
   const buckets = new Map<string, DeskWork[]>()
   const loose: DeskWork[] = []
@@ -452,7 +545,7 @@ export function groupWork(
     const project = projects.get(key)
     const ms = project?.milestones ?? null
     const rows = dedupeBorrowed(
-      works.map((w) => toRow(w, d, asOf, projects.get(w.project ?? ''))).sort(sortRows),
+      works.map((w) => toRow(w, d, asOf, projects.get(w.project ?? ''), ctx)).sort(sortRows),
       project,
     )
     return {
@@ -621,9 +714,19 @@ function dueOf(r: WeeklyRow): string {
   return shortDate(r.due) ?? '(계획)'
 }
 
-/** 진행사항을 칸에 맞게 줄입니다 (`clamp.briefText`). 안건 이름은 떼어 냅니다 */
+/**
+ * 진행사항을 칸에 맞게 줄입니다 (`clamp.briefText`). 안건 이름은 떼어 냅니다.
+ *
+ * 진척 메모(`appendNote`)는 **자르지 않고 통째로 들어갈 때만** 붙입니다. 업무의 글이
+ * 먼저이고, 메모 때문에 그 글이 잘리면 안 됩니다 — 진척률은 옆 진척율 칸에도 있습니다.
+ */
 function briefRow(r: WeeklyRow, col: ColumnFit): WeeklyRow {
-  return r.detail ? { ...r, detail: briefText(r.detail, r.title, col.w, col.sz, col.lines) } : r
+  if (!r.detail) return r
+  if (r.appendNote) {
+    const both = briefText(`${r.detail} · ${r.appendNote}`, r.title, col.w, col.sz, col.lines)
+    if (!both.endsWith('…') && both.endsWith(r.appendNote)) return { ...r, detail: both }
+  }
+  return { ...r, detail: briefText(r.detail, r.title, col.w, col.sz, col.lines) }
 }
 
 export function buildWeekly(
@@ -632,8 +735,10 @@ export function buildWeekly(
   opt: WeeklyOptions,
 ): WeeklyModel {
   const asOf = lateAsOf(opt.week, opt.snapshotDay ?? opt.reportedOn)
+  // 진행 창·진척률은 **보고일** 기준입니다 (구간 마감이 이르면 구간 마감). 지연은 위 asOf
+  const ref = lateAsOf(opt.week, opt.reportedOn)
   const d = diffWork(before, state)
-  const grouped = groupWork(state, d, opt.week, asOf, opt.baseline !== null)
+  const grouped = groupWork(state, d, opt.week, asOf, opt.baseline !== null, ref)
   // 진행사항은 칸 폭을 알아야 줄일 수 있습니다. 칸 폭을 모르면(테스트 등) 원문 그대로
   const cols = opt.table.cols
   const all = cols ? grouped.map((g) => ({ ...g, rows: g.rows.map((r) => briefRow(r, cols.detail)) })) : grouped
@@ -719,6 +824,12 @@ export function buildWeekly(
   }
   if ((opt.history ?? []).length < 2) {
     footnotes.push('정체(3주 연속 무변화)는 스냅샷 3주치가 쌓여야 판정합니다')
+  }
+  const estimated = flat.filter((r) => r.estimated).length
+  if (estimated > 0) {
+    footnotes.push(
+      `진척률 '약 N%' ${estimated}건은 일정 경과 추정치입니다 — 지난 작업일 ÷ 전체 작업일 (시작일 없으면 마감 전 10작업일)`,
+    )
   }
   if (allChanges > fitted.maxChanges) {
     footnotes.push(`변화·지연 ${allChanges}건 중 ${fitted.maxChanges}건 표기`)
@@ -1145,7 +1256,11 @@ function foldedDetail(rows: WeeklyRow[], col: ColumnFit | undefined): string {
   const seen = new Set<string>()
   let cut = false
   const parts: string[] = []
-  for (const r of [...rows].sort((a, b) => (b.detailAt ?? '').localeCompare(a.detailAt ?? ''))) {
+  // 진척 메모뿐인 행들은 한 문구로 모읍니다 — `진척률 약 10~83%`. 묶음은 같은 상태끼리라
+  // '진행 중' 을 행마다 되풀이할 이유가 없고, 그대로 이으면 칸이 같은 말로 찹니다.
+  const notes = rows.filter((r) => r.noteOnly && r.progress !== null)
+  const range = progressRange(notes)
+  for (const r of [...rows].filter((x) => !x.noteOnly).sort((a, b) => (b.detailAt ?? '').localeCompare(a.detailAt ?? ''))) {
     const t = r.detail.trim()
     if (t.endsWith('…')) cut = true
     const bare = t.replace(/…$/, '').trim()
@@ -1154,11 +1269,23 @@ function foldedDetail(rows: WeeklyRow[], col: ColumnFit | undefined): string {
       parts.push(bare)
     }
   }
+  // 업무의 글(진행 기록 등)이 먼저이고 진척 범위는 그 뒤입니다
+  if (range) parts.push(range)
   if (parts.length === 0) return ''
   // 구성원 글이 이미 잘려 있었으면 끝에 그 사실을 남깁니다
   // 쉼표로 잇습니다 — `·` 로 이으면 줄이 `· 사용자 테스트…` 처럼 기호로 시작합니다
   const joined = `${parts.join(', ')}${cut ? '…' : ''}`
   return col ? clampText(joined, col.w, col.sz, col.lines) : joined
+}
+
+/** 묶인 행들의 진척률 범위 — `진척률 약 10~83%`. 하나라도 추정이면 '약' 을 붙입니다 */
+function progressRange(rows: WeeklyRow[]): string {
+  const values = rows.map((r) => r.progress).filter((v): v is number => v !== null)
+  if (values.length === 0) return ''
+  const lo = Math.min(...values)
+  const hi = Math.max(...values)
+  const about = rows.some((r) => r.estimated) ? '약 ' : ''
+  return `진척률 ${about}${lo === hi ? lo : `${lo}~${hi}`}%`
 }
 
 /** `Ji 외 1` — 가장 많이 맡은 사람을 대표로. 담당 칸(0.62인치)에 이름을 다 늘어놓으면 넘칩니다 */
