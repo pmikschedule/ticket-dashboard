@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - 'web/**'
+      # 웹 테스트가 계약 자료를 읽습니다 — 바뀌면 다시 검사합니다
+      - 'contracts/**'
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
 

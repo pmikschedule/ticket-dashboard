@@ -1,0 +1,28 @@
+{
+  "설명": "GET {DESK_URL}/api/state 응답 → 판정. 리디렉션은 따라가지 않습니다 — Cloudflare Access 는 인증이 만료되면 301/302 로 로그인 페이지를 돌려주므로 그것을 '인증 만료' 로 봅니다. kind = ok | auth_expired | http_error | bad_body. 응답은 전부 가상입니다.",
+  "cases": [
+    {
+      "name": "정상 — state.work 가 배열",
+      "status": 200,
+      "body": "{\"state\":{\"updatedAt\":\"2026-11-23T08:40:12.345Z\",\"work\":[{\"id\":\"w-001\",\"title\":\"가상 업무\"}],\"projects\":[]},\"email\":\"tester@example.com\",\"tier\":\"member\"}",
+      "kind": "ok",
+      "work": 1,
+      "email": "tester@example.com"
+    },
+    {
+      "name": "email 이 없어도 정상",
+      "status": 200,
+      "body": "{\"state\":{\"work\":[]}}",
+      "kind": "ok",
+      "work": 0,
+      "email": null
+    },
+    { "name": "302 = 인증 만료 (로그인으로 돌려보냄)", "status": 302, "body": "", "kind": "auth_expired" },
+    { "name": "301 도 인증 만료", "status": 301, "body": "", "kind": "auth_expired" },
+    { "name": "403 은 HTTP 오류", "status": 403, "body": "forbidden", "kind": "http_error" },
+    { "name": "503 은 HTTP 오류", "status": 503, "body": "", "kind": "http_error" },
+    { "name": "state 가 없음", "status": 200, "body": "{\"email\":\"tester@example.com\"}", "kind": "bad_body" },
+    { "name": "state.work 가 배열이 아님", "status": 200, "body": "{\"state\":{\"work\":{}}}", "kind": "bad_body" },
+    { "name": "JSON 이 아님 (로그인 HTML)", "status": 200, "body": "<html><body>Sign in</body></html>", "kind": "bad_body" }
+  ]
+}

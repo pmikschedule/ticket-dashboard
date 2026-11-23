@@ -8,18 +8,19 @@
 
 | | |
 |---|---|
-| 대시보드 | <https://pmikschedule.github.io/ticket-dashboard/> (커밋 `fcba43f`, 9/28 배포) |
+| 대시보드 | <https://pmikschedule.github.io/ticket-dashboard/> (11/23 배포 — 상단 커밋 해시로 확인) |
 | Supabase | `dftqwkvhqjgwrfidsmwc` — **PMSchedule 과 별개 프로젝트입니다** |
-| 에이전트 | Windows 서버, 오프라인 꾸러미 방식. 0.4.0. 버전은 `run.py doctor` 첫 줄 |
+| 에이전트 | Windows 서버, 오프라인 꾸러미 방식. **0.5.0 소스 준비됨 — 사내 PC 교체 대기** (사내 PC 에 있는 것은 0.4.0 이하). 버전은 `run.py doctor` 첫 줄 |
 | 계정 | 8명 등록 완료. 관리자는 Steven 한 명 |
 | 주간보고서 | 대시보드 **태스크맵 화면의 버튼**으로 만듭니다. reporter 에는 없습니다 |
-| 스냅샷 수집 | Steven 의 Mac, `~/PMS/reporter` + launchd (월 18:00 · 화 09:00 · 매월 1일 09:30) |
-| 수집 요청 감시 | 같은 Mac, launchd `me.saebom.reporter.requests` (30초마다, 11/23 등록) |
-| 테스트 | 에이전트 196개 · 웹 385개 · reporter 195개 |
+| 스냅샷 수집 | **에이전트(사내 PC)로 전환 중** — 0.5.0 교체 + 설정 화면에 desk 쿠키 등록 후 에이전트가 함 (월 18:00 · 화 09:00). 그 전까지·전환 확인까지 Steven 의 Mac launchd 도 그대로 (매월 1일 09:30 월간보고 포함) |
+| 수집 요청 감시 | 에이전트 desk 스레드 (10초마다) · Mac launchd `me.saebom.reporter.requests` (30초마다)는 전환 확인까지 병행 |
+| 테스트 | 에이전트 343개 · 웹 415개 · reporter 247개 (셋 다 `contracts/desk` 포함) |
 
-## 반드시 먼저 할 일 두 가지
+## 반드시 먼저 할 일 세 가지
 
-이 둘을 안 하면 **화면은 도는데 저장에서 막힙니다.** 원인을 찾기 어려운 실패입니다.
+앞의 둘을 안 하면 **화면은 도는데 저장에서 막힙니다.** 원인을 찾기 어려운 실패입니다.
+순서대로 합니다 — 스키마 → 에이전트 → 쿠키.
 
 ### 1. `supabase/schema.sql` 전체 재실행
 
@@ -33,6 +34,8 @@ SQL Editor 에 통째로 붙여넣습니다. 재실행 안전합니다. 21장부
 - **25장** — `desk_scan_requests`·`desk_scan_waiting()`. 없으면 주간보고서 생성 전 자동
   수집이 안 되고, 화면이 그 사실을 밝힌 뒤 '기존 수집본으로 생성' 을 눌러야 만듭니다.
   **11/23 기준 아직 적용 전입니다** (감시 작업 로그에 '표가 DB 에 없습니다')
+- **25.2·25.3** (11/23 오후 추가) — 에이전트(service_role)의 `desk_snapshots`·
+  `desk_scan_requests` 표 권한, 그리고 desk 상태 설정 행 `desk_*` 다섯 개
 
 확인:
 
@@ -51,29 +54,35 @@ select tablename from pg_tables
 
 select proname from pg_proc where proname = 'desk_scan_waiting';
 -- 나와야 주간보고서 생성 전에 desk 를 자동으로 다시 읽습니다
+
+select key from public.app_settings where key like 'desk_%' order by key;
+-- desk_auth_source · desk_cookie_expires_at · desk_last_scan_at/ok/note 다섯 줄
 ```
 
-### 2. 윈도우 에이전트 소스 교체 (0.4.0)
+### 2. 윈도우 에이전트 소스 교체 (0.5.0)
 
-<https://github.com/pmikschedule/ticket-dashboard/releases/download/agent-v1/ticket-agent-src-0.4.0.zip>
+<https://github.com/pmikschedule/ticket-dashboard/releases/download/agent-v1/ticket-agent-src-0.5.0.zip>
 
-54KB 입니다. 라이브러리는 안 바뀌었으니 **`lib/` 는 건드리지 마세요.**
+약 77KB 입니다. 라이브러리는 안 바뀌었으니 **`lib/` 는 건드리지 마세요.** 0.4.0 을 건너뛰고
+바로 올려도 됩니다 (0.4.0 의 변경이 다 들어 있습니다).
 
-1. 에이전트를 끕니다
-2. zip 을 풀어 나온 `src` 폴더를 `C:\ticket-agent\` 에 덮어쓰기
-3. `.env` 에 아래 두 줄을 더합니다 (없으면 기본값 3일 / 제한 없음)
+1. 에이전트 창을 닫습니다
+2. zip 을 풀어 나온 **`src` 폴더만** `C:\ticket-agent\` 에 덮어쓰기 — `lib\`·`.env`·`data\` 는 그대로
+3. `run-agent.bat` 실행 → doctor 첫 줄 `에이전트 버전 : 0.5.0`, 아래에 `■ desk 수집` 줄
+   (desk 줄은 **경고만** 합니다 — ⚠️ 여도 에이전트는 뜹니다)
 
-```
-SCAN_LOOKBACK_DAYS=3
-SCAN_LIMIT=0
-```
+`.env` 에 더할 값은 없습니다. 0.4.0 의 `SCAN_LOOKBACK_DAYS=3`·`SCAN_LIMIT=0` 도 없으면
+기본값이 같습니다. zip 의 `.env.example` 은 이름이 달라 `.env` 를 덮지 않습니다.
 
-4. `python run.py doctor` → 첫 줄이 `에이전트 버전 : 0.4.0`
+**이걸 안 하면** 판단 대기·첨부 구분·스캔 첨부 보관(0.4.0)과 desk 수집(0.5.0)이 전부
+동작하지 않습니다. 에이전트 코드에 있는 기능들입니다.
 
-`.env` 는 그대로 둡니다 (zip 에 든 건 `.env.example` 이라 이름이 달라 안전합니다).
+### 3. desk 쿠키 붙여넣기 (관리자)
 
-**이걸 안 하면** 판단 대기·첨부 구분·스캔 첨부 보관이 전부 동작하지 않습니다.
-에이전트 코드에 있는 기능들입니다.
+대시보드 **설정 → desk 인증 → 등록**. desk 에 로그인한 브라우저에서 F12 → Application →
+Cookies → desk 주소 → `CF_Authorization` 값을 복사해 넣습니다. 1분 안에 그 카드에
+'에이전트가 쓰는 인증 · 설정 화면의 쿠키' 와 만료일이 뜨고, 확인 수집 결과가 '마지막
+수집' 에 나옵니다. 자세한 것은 [SETUP.md](SETUP.md) 12장.
 
 ## 8/7 세션에 바뀐 것
 
@@ -262,6 +271,35 @@ desk 인증이 **특정 Mac 의 Chrome 쿠키**라 수집이 그 Mac 을 벗어�
   신규 건수가 줄어듭니다 — 11/23 은 7건이 신규 대신 진행으로 셉니다
 - 대기 업무도 일정 창 안이면 표에 실립니다 (전에는 신규·지연일 때만)
 
+## 11/23 오후에 바뀐 것 — desk 수집을 에이전트로 (0.5.0)
+
+Mac 에 상시 작업을 두지 않기로 하고, desk 수집(정기 + 화면의 수집 요청)을 사내 윈도우
+PC 의 에이전트로 옮겼습니다. 사내 PC 에서 desk 접속이 되는 것은 사용자가 확인했습니다.
+설계 근거는 [DESIGN.md](DESIGN.md) 14장.
+
+- `run` 이 메일 루프 옆에 **desk 스레드**를 띄웁니다. 10초마다 수집 요청을 보고, 월 18:00 ·
+  화 09:00(고정 +09:00)에 정기 수집, 1분마다 인증을 다시 읽어 만료일을 화면에 알립니다
+- desk 인증은 **관리자가 설정 화면에 붙여 넣은 쿠키**(`app_secrets.desk_cf_authorization`).
+  설정 화면 > `.env`. Service Token 은 자리만 있습니다 (desk 소유자가 발급하면 우선 사용)
+- 화면: 설정의 **desk 인증** 카드(붙여넣기 · 만료일 미리보기 · 마지막 수집), 모든 화면 위
+  **만료 7일 전 배너**, 태스크맵·수집 대기 문구의 'Mac·수집 PC' → '에이전트'
+- 새 명령 `desk-scan` / `desk-scan --dry-run`. doctor 의 desk 줄은 경고만
+- 로컬 사본 `data\desk-snapshots\` — 못 올린 날짜는 다음 수집 때 다시 올립니다
+- `contracts/desk/*.json` — 에이전트·웹·reporter 테스트가 함께 읽는 가상 기준 자료.
+  기대값은 reporter 구현으로 계산했습니다
+- reporter 와 Mac launchd 는 **건드리지 않았습니다** (비상용 · 전환 확인 뒤 별도 정리)
+
+**실데이터 대조 (11/23)** — Mac 에서 reporter 의 쿠키 추출로 쿠키를 얻어 환경 변수로만
+넘기고 `desk-scan --dry-run` 을 돌렸습니다(업로드 안 함). work 105 · projects 12 ·
+decisions 2. 파이썬이 만든 행과, 같은 state 로 TS(`makeSnapshot`→`snapshotRow`)가 만든
+행이 day·scanned_at·source_at·counts·키 구성·state 통째까지 일치했고, TS 가 따로 받은
+desk 응답도 파이썬이 받은 것과 같았습니다. 오프라인 꾸러미 src zip 을 풀어 `run.py --help`
+·`doctor` 가 import 오류 없이 도는 것도 Mac 에서 확인했습니다(lib 는 Mac 용으로 대신).
+
+**desk 의 `updatedAt` 은 ISO 가 아니라 `2026-11-20 14:28:34` 모양**입니다. 그대로
+`source_at`(timestamptz)에 넣고 Postgres 가 세션 시간대(UTC)로 읽습니다 — reporter 와 같은
+동작이라 바꾸지 않았습니다.
+
 ## 알려진 한계
 
 - **Storage 가 쌓입니다.** 요청이 아니라고 걸러진 메일의 첨부도 보관합니다.
@@ -274,10 +312,12 @@ desk 인증이 **특정 Mac 의 Chrome 쿠키**라 수집이 그 Mac 을 벗어�
   켭니다(기본 0=꺼짐). 근거가 약한 기준이라 기본값은 끔입니다.
 - **관리자가 Steven 한 명입니다.** 티켓 삭제·설정 변경·계정 관리가 그 계정에
   묶여 있습니다.
-- **desk 수집이 Steven 의 Mac 한 대에 묶여 있습니다.** 쿠키가 그 Chrome 프로필에만
-  있습니다. 만료되면 사람이 desk 에 다시 로그인해야 하고, 그 전까지 스냅샷이
-  안 쌓입니다. **놓친 스냅샷은 복원되지 않습니다** — desk 는 과거 시점을 안 줍니다.
-  `npm run doctor` 가 남은 날짜를 알려 줍니다.
+- **desk 쿠키는 한 달마다 사람이 갈아 넣습니다.** desk 가 Cloudflare Access(메일 인증)
+  뒤라 자동 로그인이 없습니다. 만료되면 그 전까지 스냅샷이 안 쌓이고 **놓친 스냅샷은
+  복원되지 않습니다** — desk 는 과거 시점을 안 줍니다. 만료 7일 전부터 화면 배너와
+  에이전트 doctor 가 알립니다. 근본 해결은 desk 소유자가 Service Token 을 발급하는 것입니다
+- **0.5.0 교체 전까지 desk 수집은 여전히 Steven 의 Mac 입니다.** 그 Mac 의 쿠키가
+  만료되면(아래 '다음에 할 것' 0) 교체 전까지 수집이 멈춥니다
 
 ## 운영 메모
 
@@ -287,23 +327,29 @@ desk 인증이 **특정 Mac 의 Chrome 쿠키**라 수집이 그 Mac 을 벗어�
   `max-age=600` 을 겁니다. 상단 커밋 해시를 보고 강제 새로고침(Ctrl+F5).
 - **오프라인 꾸러미 재생성**: 인터넷 되는 기기에서
   `python3 agent/tools/build_offline_bundle.py` (전체 67MB).
-  코드만 바뀌었으면 `src` 폴더만 zip 해서 올리면 됩니다.
+  코드만 바뀌었으면 `--src-only` 로 `dist-offline/ticket-agent-src-<버전>.zip` 을 만들어
+  릴리스 `agent-v1` 에 올립니다 (기존 전체 꾸러미는 지우지 않습니다).
 - **Outlook COM 은 로그온한 데스크톱 세션에서만 됩니다.** 작업 스케줄러에서
   "로그온 여부에 관계없이 실행" 을 고르면 **조용히 아무 메일도 수집되지 않습니다.**
 - **주간보고서가 안 만들어지면 스냅샷부터 봅니다.** 그 구간 안에 뜬 스냅샷이
   있어야 그 구간을 만들 수 있습니다. 없으면 화면이 배너로 밝힙니다.
 - **보고 당일 desk 를 고쳤으면** — 25장이 적용돼 있으면 생성 버튼이 알아서 다시
-  읽습니다(3분 안에 끝난 수집이 있으면 그것을 씁니다). 적용 전이면 수집 Mac 에서
-  `npm run scan` 을 한 번 더 돌리고 화면을 새로고침합니다.
-- **수집 요청 처리 기록**: `reporter/data/requests.log` — 처리했을 때와 (한 시간에 한 번)
-  확인이 실패했을 때만 적힙니다. 조용하면 할 일이 없었던 것입니다
-- **점검 한 줄**: `cd reporter && npm run doctor` — 쿠키 만료·desk 연결·대시보드·
-  태스크맵·스냅샷 나이(7일 넘으면 실패)·수집 요청 표·감시 작업 등록을 한 번에 봅니다.
+  읽습니다(3분 안에 끝난 수집이 있으면 그것을 씁니다). 적용 전이면 사내 PC 에서
+  `python run.py desk-scan`(0.5.0) 또는 수집 Mac 에서 `npm run scan` 을 돌리고 화면을 새로고침합니다.
+- **수집 기록**: 에이전트 콘솔에 `ticket_agent.desk` 로 찍힙니다 — 처리했을 때와 (한 시간에
+  한 번) 확인이 실패했을 때만. 마지막 결과는 설정 → desk 인증 카드에도 나옵니다.
+  Mac 쪽은 `reporter/data/requests.log`
+- **점검 한 줄**: 사내 PC 에서 `python run.py doctor` 의 `■ desk 수집` — 쿠키 출처·만료·
+  desk 연결·수집 요청 표·대시보드 스냅샷 나이. Mac 쪽(비상용)은 `cd reporter && npm run doctor`.
 
 ## 다음에 할 만한 것
 
-0. **desk 쿠키가 11/25 12:44 에 만료됩니다** (11/23 기준 2일). 수집 Mac 의 Chrome 으로
-   desk 에 다시 로그인해야 정기 스캔·수집 요청이 계속 됩니다
+0. **Mac 의 desk 쿠키가 11/25 21:44(한국 시각)에 만료됩니다** (11/23 기준 2일. 전에 적은
+   '12:44' 는 UTC 였습니다). 그 전에 사내 PC 를 0.5.0 으로 바꾸고 설정 화면에 쿠키를 넣으면
+   수집이 끊기지 않습니다. 못 하면 수집 Mac 의 Chrome 으로 desk 에 다시 로그인합니다
+0. **전환 확인 뒤 Mac 정리** — 에이전트로 정기 수집·화면 요청이 며칠 돌면 Mac 의 launchd
+   (`me.saebom.reporter` 의 스캔 · `.requests`)를 끄고 reporter 의 수집 부분을 정리합니다.
+   월간보고(매월 1일)를 어디서 돌릴지 같이 정합니다
 
 0. **주간보고서 각주가 슬라이드에 안 그려집니다.** `WeeklyModel.footnotes` 에는
    '몇 건 묶음·몇 건 머리행 건수로만' 같은 사실이 쌓이는데 볼 곳이 없습니다

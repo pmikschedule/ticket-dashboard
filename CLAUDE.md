@@ -18,7 +18,8 @@
 
 ```
 supabase/schema.sql   테이블 8개 + RLS + Storage + 통계 뷰 (한 파일, 재실행 안전)
-agent/                Local PC 에이전트 (Python) — 메일 수집·분류·적재, 완료 회신 발송
+agent/                Local PC 에이전트 (Python) — 메일 수집·분류·적재, 완료 회신 발송, desk 수집
+contracts/desk/       desk 수집 규칙의 공통 기준 자료 (가상) — agent·web·reporter 테스트가 함께 읽음
 web/                  React 대시보드 — 칸반·리스트·상세·통계·태스크맵
 reporter/             desk 수집기 + 월간 보고서 (Node) — 주간은 web 이 만듭니다
 ```
@@ -32,12 +33,12 @@ reporter/             desk 수집기 + 월간 보고서 (Node) — 주간은 web
 브라우저에서 pptx 를 내려받습니다 — 집계 규칙을 두 벌 두면 갈라지기 때문에
 주간 쪽 코드는 통째로 그쪽에 있습니다. reporter 에는 월간과 업무 목록만 남습니다.
 
-**읽기 전용이 아닙니다.** desk 스냅샷과 태스크 맵은 대시보드 DB 에 씁니다
-(`desk_snapshots`·`task_map`, schema.sql 24장). desk 인증이 특정 Mac 의 Chrome
-쿠키라 **수집이 그 Mac 을 벗어날 수 없어서**, 그 Mac 이 모아 올리지 않으면 팀은
-desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대로 로컬이고 결과만
-올라옵니다. 그래도 **service_role 키는 여전히 안 씁니다** — 관리자 계정으로
-로그인해 RLS 를 그대로 통과합니다.
+**desk 수집은 2026-11-23 부터 에이전트가 합니다** (0.5.0 · `run` 의 desk 스레드 ·
+[docs/DESIGN.md](docs/DESIGN.md) 14장). 관리자가 설정 화면에 붙여 넣은 desk 쿠키로
+정기 수집(월 18:00 · 화 09:00)과 주간보고서 화면의 수집 요청을 처리해
+`desk_snapshots` 에 올립니다. reporter 의 `scan`·`requests` 는 **비상용**으로 남아
+있습니다 — 그쪽은 관리자 계정으로 로그인해 RLS 를 통과하고, 에이전트는 원래대로
+service_role 입니다. 전환을 확인한 뒤 Mac 의 launchd 를 끄고 정리합니다(별도 작업).
 
 ## 절대 규칙
 
@@ -120,16 +121,16 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
   고를 수 있고, **스냅샷이 있는 구간보다 앞으로는 못 갑니다.**
   구간을 만들려면 그 구간 안에 뜬 스냅샷이 있어야 합니다. 없으면 스냅샷이 속한
   구간까지만 만들 수 있고 화면이 배너로 밝힙니다 (`weekForSnapshot`) — 조용히 지난
-  구간을 내놓으면 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다. `doctor` 는
-  스냅샷이 7일을 넘기면 실패로 셉니다.
+  구간을 내놓으면 서식도 건수도 멀쩡해 보여서 아무도 못 알아챕니다. 스냅샷이 7일을
+  넘기면 에이전트 `doctor` 는 경고로(메일 수집을 막지 않게), reporter `doctor` 는 실패로 셉니다.
   **구간마다 스냅샷을 따로 고릅니다** (`week.snapshotsFor`): 그 구간 안 마지막 것이
   현재, 구간 시작 전 마지막 것이 기준입니다. 늘 최신을 현재로 쓰던 때, 스냅샷보다
   뒤 구간을 고르면 **기준과 현재가 같은 스냅샷**이 되어 완료·착수·신규가 전부 0 으로
   나왔습니다 (2026-09-28). 보고일은 만든 날, 지연 판정은 스냅샷 날입니다.
 - **주간보고서 생성 버튼은 먼저 desk 최신 현황을 받아 옵니다** (오늘 구간일 때만).
-  웹이 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장) 수집 Mac 의 감시 작업
-  (`me.saebom.reporter.requests`, 30초마다 `npm run requests`)이 `npm run scan` 과
-  **같은 함수**(`scanOnce`)로 스캔·업로드한 뒤, 화면이 최대 2분 기다렸다 만듭니다.
+  웹이 `desk_scan_requests` 에 요청을 넣고(schema.sql 25장) 에이전트의 desk 스레드가
+  10초마다 집어 정기 수집·`desk-scan` 과 **같은 함수**(`DeskWorker.scan`)로 스캔·업로드한
+  뒤, 화면이 최대 2분 기다렸다 만듭니다. 성공은 **대시보드에 올라갔을 때만**입니다.
   정기 스캔은 월 18:00·화 09:00 뿐이라 그 사이 desk 에 등록한 일이 빠졌습니다
   (11/20 등록한 BRS HK 7건이 11/23 보고서에서). **못 받으면 옛 수집본으로 조용히
   만들지 않습니다** — 이유와 마지막 수집 날짜를 밝히고, 사람이 '기존 수집본(MM/DD)
@@ -176,6 +177,25 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
   (`spill`), 그것은 **서식을 바꾸는 일**이라 되돌렸습니다. 기계는 그 둘을 여전히
   할 줄 알지만 설정으로 막아 뒀습니다 — 서식을 바꾸는 것은 코드가 아니라 결정이고,
   결정이 바뀌면 그 한 곳만 고칩니다. **pptx 서식은 임의로 바꾸지 않습니다.**
+- **desk 인증은 Gemini 키와 같은 길입니다.** 쿠키(`CF_Authorization` JWT)는
+  `app_secrets` 의 `desk_cf_authorization` 에 `set_app_secret` 으로 넣기만 합니다.
+  고르는 순서는 Service Token(설정 화면 → `.env`) > 쿠키(설정 화면 → `.env`)이고
+  **설정 화면이 `.env` 를 이깁니다** (`secrets.choose_desk_auth`). 에이전트는 비밀이
+  아닌 것 — 인증 출처·쿠키 만료일(JWT `exp`, 서명 검증 없이 읽기만)·마지막 수집 결과 —
+  만 `app_settings` 의 `desk_*` 에 적고, 화면이 **만료 7일 전부터** 배너를 띄웁니다.
+  만료를 놓쳐 수집이 11~12일씩 빈 적이 두 번 있습니다.
+- **desk 스레드는 메일 수집과 떨어져 있습니다.** Outlook COM 을 안 건드리고 Supabase
+  클라이언트도 따로입니다. **doctor 의 desk 줄은 경고만** 합니다 — `run-agent.bat` 은
+  doctor 가 실패하면 에이전트를 안 띄우므로, 쿠키 만료가 메일 수집까지 멈추게 하면
+  안 됩니다. 정기 회차는 고정 +09:00 입니다(윈도우 파이썬에 시간대 자료가 없어
+  `zoneinfo` 금지). 실패한 회차는 다시 시도하지 않습니다.
+- **desk 규칙은 두 언어로 있고 `contracts/desk/*.json` 이 기준입니다.** 스냅샷 행
+  (day = UTC 날짜 · scanned_at = 밀리초+Z · source_at 그대로 · state 통째)·올릴 것
+  고르기·실패 이유 가리기·쿠키 만료·응답 판정을 에이전트(pytest)·웹·reporter(vitest)가
+  같은 파일로 검사합니다. 한쪽을 고치면 자료를 같이 고칩니다. **가상 자료만** 넣습니다.
+- **에이전트는 파이썬 3.10 에서도 돕니다.** 3.11+ 기능(`datetime.UTC`·`tomllib`)을 쓰지
+  않고, 3.10 의 `fromisoformat` 이 못 읽는 시각(`Z`·`.12`)은 `desk.parse_instant` 로 읽습니다.
+  새 라이브러리를 넣지 않습니다 — 오프라인 꾸러미의 `lib/` 를 다시 만들어야 합니다.
 - **Outlook 접근은 `MailClient` 인터페이스 뒤에 둡니다.** 운영은 `OutlookMailClient`,
   개발·테스트는 `FixtureMailClient`. 나머지 코드는 구현을 몰라야 macOS 에서 테스트가 돕니다.
 
@@ -191,8 +211,12 @@ desk 현황을 대시보드에서 볼 방법이 없습니다. 수집은 그대�
 import 로 공유가 안 됩니다. 여기가 틀리면 저장이 실패하는 대신 **보고서 건수가
 조용히 0 이 됩니다** — 모르는 값은 어느 칸에도 안 세기 때문입니다.
 
-desk 수집 요청 상태(`pending`·`running`·`done`·`failed`)는 **schema.sql 25장 ·
-`web/src/lib/constants.ts` · `reporter/src/types.ts`** 세 곳입니다 (에이전트는 안 씁니다).
+desk 수집 요청 상태(`pending`·`running`·`done`·`failed`)는 **네 곳**입니다 — schema.sql
+25장의 check 제약, `agent/src/ticket_agent/constants.py` 의 `SCAN_REQUEST_STATUSES`
+(에이전트가 `running`·`done`·`failed` 로 옮깁니다), `web/src/lib/constants.ts`,
+`reporter/src/types.ts`. 네 곳 모두 `contracts/desk/constants.json` 과 대조하는 테스트가
+있어 하나만 고치면 그쪽 테스트가 깨집니다. desk 상태 설정 이름(`desk_*`)·쿠키 비밀값
+이름도 같은 파일에 있고, schema.sql 25.3 이 설정 행을 미리 만듭니다.
 
 ## 차트
 
@@ -204,14 +228,17 @@ desk 수집 요청 상태(`pending`·`running`·`done`·`failed`)는 **schema.sq
 ## 명령
 
 ```bash
-cd web      && npm test && npm run build   # 순수 로직 385개 + 타입체크
-cd agent    && pytest -q                   # 순수 로직·파이프라인 196개
-cd agent    && ticket-agent doctor         # 설정·연결 점검
-cd reporter && npm test                    # 집계·레이아웃 195개 + 타입체크
-cd reporter && npm run doctor              # 설정·연결·쿠키 + 스냅샷 나이 점검
-cd reporter && npm run scan                # desk 스냅샷 + 대시보드 업로드 (주 1회 이상)
-cd reporter && npm run push                # 밀린 스냅샷만 올리기
-cd reporter && npm run requests            # 화면의 수집 요청 처리 (launchd 가 30초마다)
+cd web      && npm test && npm run build   # 순수 로직 415개 + 타입체크
+cd agent    && pytest -q                   # 순수 로직·파이프라인 343개
+cd agent    && ticket-agent doctor         # 설정·연결 점검 (desk 줄은 경고만)
+cd agent    && ticket-agent desk-scan --dry-run   # desk 받기·행 만들기만 (업로드 안 함)
+cd agent    && ticket-agent desk-scan      # desk 1회 수집 + 업로드
+python3 agent/tools/build_offline_bundle.py --src-only   # 사내 PC 용 src zip
+cd reporter && npm test                    # 집계·레이아웃·계약 247개 + 타입체크
+cd reporter && npm run doctor              # (비상용) 설정·연결·쿠키 + 스냅샷 나이 점검
+cd reporter && npm run scan                # (비상용) desk 스냅샷 + 대시보드 업로드
+cd reporter && npm run push                # (비상용) 밀린 스냅샷만 올리기
+cd reporter && npm run requests            # (비상용) 화면의 수집 요청 처리
 cd reporter && npm run monthly             # 지난달 보고서 pptx
 cd reporter && npm run list                # 업무 전수 목록 xlsx
 ```
@@ -221,7 +248,7 @@ cd reporter && npm run list                # 업무 전수 목록 xlsx
 - **접수일** = `tickets.received_at` (메일 수신일시). `created_at`(에이전트 적재 시각)이 아닙니다.
 - **리드타임** = 접수 → 완료 경과 시간. `ticket_lead_times` 뷰가 계산합니다.
 - **발송 큐** = `outbound_emails`. 웹이 넣고 에이전트가 집어갑니다.
-- **수집 요청 큐** = `desk_scan_requests`. 같은 구조 — 웹이 넣고 수집 Mac 이 집어갑니다.
+- **수집 요청 큐** = `desk_scan_requests`. 같은 구조 — 웹이 넣고 에이전트의 desk 스레드가 집어갑니다.
 - **수동 등록 큐** = `manual_intake`. 같은 구조. **`is_request` 판정을 하지 않습니다** —
   사람이 등록한 이상 요청 여부는 이미 결정됐고 LLM 은 분류만 합니다.
 - **MTTA/MTTR** = 접수→착수(대기) / 착수→완료(수리). 둘 다 **장애만** 모수로 삼고,

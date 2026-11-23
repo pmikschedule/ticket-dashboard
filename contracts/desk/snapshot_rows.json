@@ -1,0 +1,339 @@
+{
+  "설명": "desk /api/state 응답 → desk_snapshots 행. day = 스캔 시각의 UTC 날짜, scanned_at = 밀리초+Z, source_at = state.updatedAt 그대로, counts = 목록 길이, state = 가공 없이 통째로. 기대값은 reporter makeSnapshot → snapshotRow 로 계산했습니다. 업무 내용은 전부 가상입니다.",
+  "cases": [
+    {
+      "name": "기본 — 원본 시각을 문자열 그대로",
+      "scanned_at": "2026-11-23T08:59:59.999Z",
+      "response": {
+        "state": {
+          "updatedAt": "2026-11-23T08:40:12.345Z",
+          "work": [
+            {
+              "id": "w-001",
+              "owner": "담당A",
+              "title": "가상 업무 w-001",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "ing",
+              "start": "2026-11-17",
+              "due": "2026-11-27",
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            },
+            {
+              "id": "w-002",
+              "owner": "담당A",
+              "title": "가상 업무 w-002",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "todo",
+              "start": "2026-11-17",
+              "due": null,
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [
+            {
+              "id": "p-01",
+              "name": "가상 프로젝트"
+            }
+          ],
+          "decisions": [],
+          "systems": [],
+          "people": [
+            {
+              "name": "담당A"
+            }
+          ],
+          "holidays": [
+            "2026-12-25"
+          ]
+        },
+        "email": "tester@example.com",
+        "tier": "member"
+      },
+      "expected_row": {
+        "day": "2026-11-23",
+        "scanned_at": "2026-11-23T08:59:59.999Z",
+        "source_at": "2026-11-23T08:40:12.345Z",
+        "state": {
+          "updatedAt": "2026-11-23T08:40:12.345Z",
+          "work": [
+            {
+              "id": "w-001",
+              "owner": "담당A",
+              "title": "가상 업무 w-001",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "ing",
+              "start": "2026-11-17",
+              "due": "2026-11-27",
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            },
+            {
+              "id": "w-002",
+              "owner": "담당A",
+              "title": "가상 업무 w-002",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "todo",
+              "start": "2026-11-17",
+              "due": null,
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [
+            {
+              "id": "p-01",
+              "name": "가상 프로젝트"
+            }
+          ],
+          "decisions": [],
+          "systems": [],
+          "people": [
+            {
+              "name": "담당A"
+            }
+          ],
+          "holidays": [
+            "2026-12-25"
+          ]
+        },
+        "counts": {
+          "work": 2,
+          "projects": 1,
+          "decisions": 0
+        }
+      }
+    },
+    {
+      "name": "UTC 날짜가 키입니다 — 한국 시각 11/24 00:30 이어도 11/23",
+      "scanned_at": "2026-11-23T15:30:00.000Z",
+      "response": {
+        "state": {
+          "updatedAt": "2026-11-23T15:00:00.000Z",
+          "work": [
+            {
+              "id": "w-003",
+              "owner": "담당A",
+              "title": "가상 업무 w-003",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "done",
+              "start": "2026-11-17",
+              "due": "2026-11-20",
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [],
+          "decisions": [
+            {
+              "id": "d-1"
+            }
+          ]
+        }
+      },
+      "expected_row": {
+        "day": "2026-11-23",
+        "scanned_at": "2026-11-23T15:30:00.000Z",
+        "source_at": "2026-11-23T15:00:00.000Z",
+        "state": {
+          "updatedAt": "2026-11-23T15:00:00.000Z",
+          "work": [
+            {
+              "id": "w-003",
+              "owner": "담당A",
+              "title": "가상 업무 w-003",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "done",
+              "start": "2026-11-17",
+              "due": "2026-11-20",
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [],
+          "decisions": [
+            {
+              "id": "d-1"
+            }
+          ]
+        },
+        "counts": {
+          "work": 1,
+          "projects": 0,
+          "decisions": 1
+        }
+      }
+    },
+    {
+      "name": "없는 목록은 0 · 없는 updatedAt 은 null",
+      "scanned_at": "2026-11-17T09:00:00.000Z",
+      "response": {
+        "state": {
+          "work": []
+        }
+      },
+      "expected_row": {
+        "day": "2026-11-17",
+        "scanned_at": "2026-11-17T09:00:00.000Z",
+        "source_at": null,
+        "state": {
+          "work": []
+        },
+        "counts": {
+          "work": 0,
+          "projects": 0,
+          "decisions": 0
+        }
+      }
+    },
+    {
+      "name": "updatedAt 이 null 이면 null",
+      "scanned_at": "2026-11-17T09:00:00.000Z",
+      "response": {
+        "state": {
+          "updatedAt": null,
+          "work": [
+            {
+              "id": "w-004",
+              "owner": "담당A",
+              "title": "가상 업무 w-004",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "hold",
+              "start": "2026-11-17",
+              "due": null,
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [],
+          "decisions": []
+        }
+      },
+      "expected_row": {
+        "day": "2026-11-17",
+        "scanned_at": "2026-11-17T09:00:00.000Z",
+        "source_at": null,
+        "state": {
+          "updatedAt": null,
+          "work": [
+            {
+              "id": "w-004",
+              "owner": "담당A",
+              "title": "가상 업무 w-004",
+              "project": "p-01",
+              "system": null,
+              "parent": null,
+              "status": "hold",
+              "start": "2026-11-17",
+              "due": null,
+              "completedOn": null,
+              "progress": null,
+              "types": [
+                "개발"
+              ],
+              "detail": null,
+              "log": [
+                {
+                  "date": "2026-11-20",
+                  "text": "가상 진행 기록"
+                }
+              ]
+            }
+          ],
+          "projects": [],
+          "decisions": []
+        },
+        "counts": {
+          "work": 1,
+          "projects": 0,
+          "decisions": 0
+        }
+      }
+    }
+  ]
+}

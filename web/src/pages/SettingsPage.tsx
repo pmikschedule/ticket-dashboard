@@ -18,6 +18,14 @@ import {
 } from '../hooks/queries'
 import { GEMINI_KEY_SECRET, GEMINI_MODEL_SETTING } from '../lib/api'
 import { RULE_KINDS, RULE_KIND_LABELS, type RuleKind } from '../lib/constants'
+import {
+  DESK_AUTH_SOURCE_LABELS,
+  DESK_COOKIE_SECRET,
+  daysLeft,
+  parseDeskCookie,
+  readDeskStatus,
+  shortStamp,
+} from '../lib/deskAuth'
 import { formatDateTime } from '../lib/format'
 
 /**
@@ -51,6 +59,7 @@ export default function SettingsPage() {
       {error && <p className="rounded-md bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
 
       <SystemConfigSection canEdit={isAdmin} onError={fail} />
+      <DeskAuthSection canEdit={isAdmin} onError={fail} />
       <IntakeRulesSection canEdit={isAdmin} onError={fail} />
       <AmbiguousPolicySection canEdit={isAdmin} onError={fail} />
       <SystemsSection canEdit={isAdmin} onError={fail} />
@@ -267,6 +276,241 @@ function SystemConfigSection({
             </p>
           </div>
         </>
+      )}
+    </section>
+  )
+}
+
+// ── desk 인증 ────────────────────────────────────────────────────────────────
+
+/**
+ * 주간보고서용 desk 수집에 쓰는 `CF_Authorization` 쿠키 (docs/DESIGN.md 14장).
+ *
+ * Gemini 키와 같은 길입니다 — **넣을 수만 있고 꺼낼 수 없습니다** (`set_app_secret`).
+ * 에이전트가 1분마다 다시 읽어, 바뀌었으면 출처·만료일을 `app_settings` 에 적고
+ * 이 카드와 상단 배너가 그것을 보여 줍니다. 그래서 아래 '에이전트가 쓰는 인증' 은
+ * 붙여 넣은 값이 아니라 **에이전트가 실제로 쓰는 값**입니다.
+ */
+function DeskAuthSection({
+  canEdit,
+  onError,
+}: {
+  canEdit: boolean
+  onError: (err: unknown) => void
+}) {
+  const { data: secrets = [], isLoading, error: secretError } = useSecretStatus(canEdit)
+  const { data: settings = [], refetch, isFetching } = useSettings()
+  const setSecret = useSetSecret()
+  const clearSecret = useClearSecret()
+
+  const [draft, setDraft] = useState('')
+  const [editing, setEditing] = useState(false)
+  const [saved, setSaved] = useState<string | null>(null)
+
+  const cookie = secrets.find((entry) => entry.key === DESK_COOKIE_SECRET)
+  const status = readDeskStatus(settings)
+  const now = Date.now()
+  const parsed = draft.trim() ? parseDeskCookie(draft) : null
+  const draftExpired = parsed?.ok === true && parsed.expiresAt.getTime() <= now
+
+  function submit(event: FormEvent) {
+    event.preventDefault()
+    if (!parsed?.ok || draftExpired) return
+    const expiresAt = parsed.expiresAt
+    setSecret.mutate(
+      // 정리한 값(eyJ…)만 넣습니다. `CF_Authorization=` 이나 헤더 통째로 붙여 넣어도 됩니다
+      { key: DESK_COOKIE_SECRET, value: parsed.token },
+      {
+        onError,
+        onSuccess: () => {
+          setDraft('')
+          setEditing(false)
+          setSaved(
+            `등록했습니다 — 이 쿠키는 ${shortStamp(expiresAt)} 에 만료됩니다. ` +
+              '에이전트가 1분 안에 읽어 반영하고, 직전 수집이 실패였으면 바로 한 번 다시 받습니다.',
+          )
+        },
+      },
+    )
+  }
+
+  const expires = status.expiresAt ? new Date(status.expiresAt) : null
+  const left = expires ? daysLeft(expires, now) : null
+
+  return (
+    <section id="desk-auth" className="card p-5">
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold text-slate-800">desk 인증 — 주간보고서 수집</h2>
+        <button
+          type="button"
+          className="text-[11px] text-sky-700 hover:underline disabled:opacity-40"
+          disabled={isFetching}
+          onClick={() => void refetch()}
+        >
+          {isFetching ? '읽는 중…' : '상태 새로고침'}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        사내 PC 의 에이전트가 이 쿠키로 desk 를 읽어 스냅샷을 올립니다 — 정기 수집(월 18:00 · 화
+        09:00)과 주간보고서 생성 직전 수집. desk 는 Cloudflare Access 로그인(메일 인증) 뒤에 있어,
+        사람이 로그인해 받은 쿠키를 한 달에 한 번쯤 새로 넣어야 합니다.
+      </p>
+
+      {/* ── 에이전트가 알려 준 상태 — 팀원도 봅니다 ── */}
+      <div className="mt-3 space-y-1.5 rounded-md bg-slate-50 p-3 text-xs text-slate-700">
+        {status.source === null ? (
+          <p>
+            에이전트가 아직 상태를 적지 않았습니다. 사내 PC 의 에이전트를 0.5.0 으로 바꾸고 실행하면
+            여기에 나타납니다.
+          </p>
+        ) : (
+          <p>
+            <span className="text-slate-500">에이전트가 쓰는 인증 · </span>
+            <b>{DESK_AUTH_SOURCE_LABELS[status.source]}</b>
+            {expires && left !== null && (
+              <span className={left <= 7 ? 'ml-1 font-medium text-rose-700' : 'ml-1'}>
+                · 만료 {formatDateTime(status.expiresAt)}{' '}
+                {expires.getTime() <= now ? '(만료됨)' : `(${left}일 남음)`}
+              </span>
+            )}
+          </p>
+        )}
+        {status.lastScanAt && (
+          <p>
+            <span className="text-slate-500">마지막 수집 · </span>
+            {formatDateTime(status.lastScanAt)} ·{' '}
+            <b className={status.lastScanOk ? 'text-emerald-700' : 'text-rose-700'}>
+              {status.lastScanOk ? '성공' : '실패'}
+            </b>
+            {status.lastScanNote && <span className="text-slate-600"> — {status.lastScanNote}</span>}
+          </p>
+        )}
+      </div>
+
+      {!canEdit ? (
+        <p className="mt-3 rounded-md bg-slate-50 p-3 text-xs text-slate-500">
+          쿠키 등록은 관리자만 할 수 있습니다. 만료가 가까우면 관리자에게 알려 주세요.
+        </p>
+      ) : (
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <h3 className="text-xs font-semibold text-slate-800">CF_Authorization 쿠키</h3>
+
+          {secretError && (
+            <p className="mt-2 rounded-md bg-rose-50 p-2 text-xs text-rose-700">
+              등록 상태를 읽지 못했습니다: {String(secretError)}
+            </p>
+          )}
+          {isLoading && <p className="mt-2 text-xs text-slate-500">확인 중…</p>}
+
+          {!isLoading && !editing && (
+            <div className="mt-2">
+              {cookie ? (
+                <div className="rounded-md bg-emerald-50 p-3">
+                  <p className="text-xs font-medium text-emerald-900">
+                    등록됨 · <span className="font-mono">{cookie.hint}</span>
+                  </p>
+                  <p className="mt-1 text-[11px] text-emerald-800">
+                    {formatDateTime(cookie.updated_at)}
+                    {cookie.updated_by && ` · ${cookie.updated_by}`}
+                  </p>
+                </div>
+              ) : (
+                <div className="rounded-md bg-amber-50 p-3">
+                  <p className="text-xs font-medium text-amber-900">등록되지 않았습니다.</p>
+                  <p className="mt-1 text-[11px] text-amber-800">
+                    에이전트는 사내 PC 의 <code>.env</code> 에 적힌 <code>DESK_CF_AUTHORIZATION</code>{' '}
+                    이 있으면 그것을 씁니다. 여기 등록하면 그쪽 대신 이 값을 씁니다.
+                  </p>
+                </div>
+              )}
+
+              {saved && <p className="mt-2 text-[11px] text-emerald-700">{saved}</p>}
+
+              <div className="mt-2 flex gap-1.5">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    setSaved(null)
+                    setEditing(true)
+                  }}
+                >
+                  {cookie ? '새 쿠키로 교체' : '등록'}
+                </button>
+                {cookie && (
+                  <button
+                    type="button"
+                    className="btn-secondary text-xs text-rose-700"
+                    disabled={clearSecret.isPending}
+                    onClick={() => {
+                      setSaved(null)
+                      clearSecret.mutate(DESK_COOKIE_SECRET, {
+                        onError,
+                        onSuccess: () => setSaved('지웠습니다. 에이전트는 .env 의 값으로 돌아갑니다 (없으면 수집이 멈춥니다).'),
+                      })
+                    }}
+                  >
+                    지우기
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {editing && (
+            <form className="mt-2" onSubmit={submit}>
+              <p className="mb-1.5 text-[11px] leading-relaxed text-slate-600">
+                desk 에 로그인한 브라우저에서 <b>F12 → Application(애플리케이션) → Cookies →
+                desk 주소 → <code>CF_Authorization</code></b> 의 값(Value)을 복사해 붙여 넣으세요.
+              </p>
+              <input
+                className="field font-mono"
+                type="password"
+                autoComplete="off"
+                spellCheck={false}
+                autoFocus
+                placeholder="eyJ…"
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+              />
+              {parsed && (
+                <p
+                  className={`mt-1 text-[11px] ${
+                    parsed.ok && !draftExpired ? 'text-emerald-700' : 'text-rose-700'
+                  }`}
+                >
+                  {parsed.ok
+                    ? draftExpired
+                      ? `이미 ${shortStamp(parsed.expiresAt)} 에 만료된 쿠키입니다 — desk 에 다시 로그인한 뒤 복사하세요`
+                      : `만료 ${shortStamp(parsed.expiresAt)} (${daysLeft(parsed.expiresAt, now)}일 남음)`
+                    : parsed.message}
+                </p>
+              )}
+              <p className="mt-1 text-[11px] text-slate-500">
+                저장한 뒤에는 <strong>다시 볼 수 없습니다</strong> — 마지막 4글자만 남습니다.
+              </p>
+              <div className="mt-2 flex gap-1.5">
+                <button
+                  type="submit"
+                  className="btn-primary text-xs"
+                  disabled={!parsed?.ok || draftExpired || setSecret.isPending}
+                >
+                  {setSecret.isPending ? '저장 중…' : '저장'}
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={() => {
+                    setDraft('')
+                    setEditing(false)
+                  }}
+                >
+                  취소
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
       )}
     </section>
   )

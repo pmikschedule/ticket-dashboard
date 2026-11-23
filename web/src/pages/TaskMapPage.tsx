@@ -231,9 +231,10 @@ export default function TaskMapPage() {
         <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
           <p className="mb-2 font-medium text-slate-800">아직 올라온 desk 스냅샷이 없습니다.</p>
           <p>
-            desk 인증이 특정 PC 의 브라우저 쿠키라 수집이 그 PC 를 벗어날 수 없습니다.
-            그 PC 에서 <code className="rounded bg-white px-1">cd reporter &amp;&amp; npm run scan</code>{' '}
-            을 한 번 돌리면 여기에 나타납니다.
+            desk 스냅샷은 사내 PC 의 에이전트가 올립니다. 관리자가{' '}
+            <b>설정 → desk 인증</b> 에 desk 쿠키를 넣어 두면 에이전트가 정기 수집(월 18:00 · 화
+            09:00)과 이 화면의 수집 요청 때 받아 올립니다. 바로 받으려면 그 PC 에서{' '}
+            <code className="rounded bg-white px-1">python run.py desk-scan</code> 을 한 번 돌립니다.
           </p>
         </div>
       </div>
@@ -326,9 +327,8 @@ export default function TaskMapPage() {
           <b>{rangeLabel(weeks.target)}</b> 이고 {weeks.behindWeeks}주 밀렸습니다. 그 뒤에 등록되거나
           끝난 일은 보고서에 없습니다.
           <br />
-          <b>주간보고서 생성</b>을 누르면 수집 PC 에 최신 수집을 먼저 요청하고, 받으면 오늘 구간으로
-          만듭니다. desk 인증이 그 PC 의 브라우저 쿠키라 수집이 거기를 벗어날 수 없습니다 — 그 PC 가
-          켜져 있어야 합니다.
+          <b>주간보고서 생성</b>을 누르면 에이전트에 최신 수집을 먼저 요청하고, 받으면 오늘 구간으로
+          만듭니다. 사내 PC 의 에이전트가 켜져 있고 desk 쿠키가 살아 있어야 합니다 (설정 → desk 인증).
         </div>
       )}
 

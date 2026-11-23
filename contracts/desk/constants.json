@@ -1,0 +1,20 @@
+{
+  "설명": "desk 수집 요청 큐와 desk 인증에 쓰는 이름·값. supabase/schema.sql 25장 · agent constants.py · web constants.ts/deskAuth.ts/deskScan.ts · reporter types.ts/requests.ts 가 이 값과 같아야 합니다. 셋 중 하나만 고치면 저장이 check 제약에 걸리거나, 화면이 에이전트가 적은 값을 못 읽습니다.",
+  "request_statuses": ["pending", "running", "done", "failed"],
+  "stale_running_minutes": 10,
+  "scan_timeout_seconds": 180,
+  "expiry_warn_days": 7,
+  "secret_keys": {
+    "cookie": "desk_cf_authorization",
+    "client_id": "desk_cf_client_id",
+    "client_secret": "desk_cf_client_secret"
+  },
+  "setting_keys": {
+    "auth_source": "desk_auth_source",
+    "cookie_expires_at": "desk_cookie_expires_at",
+    "last_scan_at": "desk_last_scan_at",
+    "last_scan_ok": "desk_last_scan_ok",
+    "last_scan_note": "desk_last_scan_note"
+  },
+  "auth_sources": ["service_token", "settings", "env", "none"]
+}

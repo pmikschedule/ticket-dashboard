@@ -1656,6 +1656,10 @@ create trigger trg_tickets_guard_received before update on public.tickets
 --
 -- 수집은 계속 그 Mac 에서 하고, **결과만** 여기로 옵니다.
 -- 자세한 근거는 docs/PLAN-REPORT-INTEGRATION.md.
+--
+-- 2026-11-23 부터 수집은 **에이전트**(사내 윈도우 PC · ticket-agent 0.5.0)가 합니다.
+-- desk 쿠키를 관리자가 설정 화면에 붙여 넣고(app_secrets), 에이전트가 service_role
+-- 로 올립니다 (25장 · docs/DESIGN.md 14장). Mac 의 reporter 는 비상용으로 남습니다.
 -- ----------------------------------------------------------------------------
 
 -- ----------------------------------------------------------------------------
@@ -1709,9 +1713,10 @@ on conflict (id) do nothing;
 -- 스냅샷에는 desk 의 업무 제목·담당자가 그대로 들어 있습니다. 팀 밖으로 나가면
 -- 안 되므로 다른 표와 같은 기준(is_member)으로 막습니다.
 --
--- 쓰기를 관리자로 좁히는 이유는 둘입니다. 스냅샷은 **그 Mac 한 대만** 올리면
+-- 쓰기를 관리자로 좁히는 이유는 둘입니다. 스냅샷은 **수집하는 한 곳만** 올리면
 -- 되고, 태스크 맵은 팀 전체 보고서의 모양을 바꾸는 규칙이라 아무나 고치면
--- 매주 다른 보고서가 나갑니다.
+-- 매주 다른 보고서가 나갑니다. 지금 수집하는 에이전트는 service_role 이라 RLS 를
+-- 지나지 않습니다 (권한은 25.2 에서 명시). 관리자 정책은 reporter 비상 수집용입니다.
 alter table public.desk_snapshots enable row level security;
 alter table public.task_map       enable row level security;
 
@@ -1756,19 +1761,24 @@ order by day desc;
 -- ============================================================================
 -- 25. desk 수집 요청 큐 — 보고서를 만들기 직전에 최신 현황을 받아 옵니다
 -- ============================================================================
--- 스냅샷은 수집 Mac 의 launchd 가 **월 18:00 · 화 09:00** 에만 떴습니다. 그 사이에
--- desk 를 고치면 보고서에 안 실렸습니다 — 11/20 에 등록한 BRS HK 신규 업무 7건이
+-- 스냅샷은 정기 수집(**월 18:00 · 화 09:00**)에만 떴습니다. 그 사이에 desk 를
+-- 고치면 보고서에 안 실렸습니다 — 11/20 에 등록한 BRS HK 신규 업무 7건이
 -- 11/23 보고서에서 빠졌습니다.
 --
--- 브라우저는 스캔을 직접 돌릴 수 없습니다. desk 인증이 그 Mac 의 Chrome 쿠키라
--- 수집이 그 Mac 을 벗어날 수 없기 때문입니다 (24장). 그래서 회신 발송 큐
--- (outbound_emails)·수동 등록 큐(manual_intake)와 같은 모양으로 둡니다:
--- **웹이 요청을 넣고, 그 Mac 의 감시 작업이 집어 가 스캔·업로드하고, 웹은 끝나길
--- 기다렸다가 보고서를 만듭니다.**
+-- 브라우저는 desk 를 직접 못 읽습니다 (Cloudflare Access 쿠키가 브라우저 밖으로
+-- 안 나옵니다). 그래서 회신 발송 큐(outbound_emails)·수동 등록 큐(manual_intake)와
+-- 같은 모양으로 둡니다: **웹이 요청을 넣고, 에이전트가 집어 가 스캔·업로드하고,
+-- 웹은 끝나길 기다렸다가 보고서를 만듭니다.**
+--
+-- 처음(11/23 오전)에는 수집 Mac 의 reporter 감시 작업이 집었습니다. 같은 날 오후부터
+-- **에이전트(사내 윈도우 PC · 0.5.0)의 desk 스레드**가 10초마다 집습니다 — 관리자가
+-- 설정 화면에 붙여 넣은 desk 쿠키(app_secrets)로 읽습니다 (docs/DESIGN.md 14장).
+-- 둘이 같이 돌아도 한 요청은 한 번만 처리됩니다 (pending→running 이 조건부 update).
 --
 -- 상태 코드값은 web/src/lib/constants.ts 의 SCAN_REQUEST_STATUSES,
+-- agent/src/ticket_agent/constants.py 의 SCAN_REQUEST_STATUSES,
 -- reporter/src/types.ts 의 SCAN_REQUEST_STATUSES 와 같아야 합니다.
--- (에이전트는 이 표를 안 씁니다)
+-- 셋 다 contracts/desk/constants.json 과 대조하는 테스트가 있습니다.
 -- ----------------------------------------------------------------------------
 create table if not exists public.desk_scan_requests (
   id           bigserial primary key,
@@ -1776,14 +1786,14 @@ create table if not exists public.desk_scan_requests (
                  check (status in ('pending', 'running', 'done', 'failed')),
   requested_by uuid references public.users(id) on delete set null,
   requested_at timestamptz not null default now(),
-  started_at   timestamptz,                 -- 감시 작업이 집어 간 시각
+  started_at   timestamptz,                 -- 에이전트가 집어 간 시각
   finished_at  timestamptz,
   snapshot_day date,                        -- 성공하면 올라간 스냅샷의 날짜 (desk_snapshots.day)
   error        text                         -- 실패 이유. 사람이 읽을 문장이고 비밀값은 넣지 않습니다
 );
 
 comment on table public.desk_scan_requests is
-  'desk 수집 요청 큐. 웹이 넣고 수집 Mac 의 감시 작업(reporter `npm run requests`)이 처리합니다';
+  'desk 수집 요청 큐. 웹이 넣고 에이전트(ticket-agent run 의 desk 스레드)가 처리합니다. reporter `npm run requests` 는 비상용';
 
 create index if not exists idx_desk_scan_open
   on public.desk_scan_requests (requested_at) where (status in ('pending', 'running'));
@@ -1815,8 +1825,9 @@ create policy desk_scan_insert on public.desk_scan_requests
     and snapshot_day is null and error is null
   );
 
--- 상태를 바꾸는 것은 수집 Mac 뿐입니다. 그 Mac 은 관리자 계정으로 로그인합니다
--- (24장과 같은 이유 — service_role 키를 쓰지 않습니다).
+-- 상태를 바꾸는 것은 수집하는 쪽뿐입니다. 에이전트는 service_role 이라 정책을
+-- 거치지 않고(25.2 에서 권한 명시), 이 관리자 정책은 reporter 비상 수집용입니다 —
+-- reporter 는 관리자 계정으로 로그인해 RLS 를 통과합니다.
 create policy desk_scan_update_admin on public.desk_scan_requests
   for update using (public.is_admin()) with check (public.is_admin());
 
@@ -1826,15 +1837,16 @@ create policy desk_scan_delete_admin on public.desk_scan_requests
 -- ----------------------------------------------------------------------------
 -- 25.1 "할 일이 있는가" — 로그인 없이 묻는 함수
 -- ----------------------------------------------------------------------------
--- 감시 작업은 30초마다 뜹니다. 그때마다 로그인하면 하루 2,880번 auth 세션이
--- 새로 생기고(auth.sessions 에 쌓입니다) 로그인 횟수 제한에도 가까워집니다.
+-- reporter 감시 작업은 30초마다 뜹니다. 그때마다 로그인하면 하루 2,880번 auth
+-- 세션이 새로 생기고(auth.sessions 에 쌓입니다) 로그인 횟수 제한에도 가까워집니다.
 -- 그래서 **건수만** 로그인 없이(anon) 묻고, 할 일이 있을 때만 로그인합니다.
+-- (에이전트는 service_role 로 표를 바로 읽으므로 이 함수를 안 씁니다)
 --
 -- 돌려주는 것은 숫자 두 개뿐입니다 — 누가 언제 무엇을 요청했는지는 나가지
 -- 않습니다. 표 자체는 여전히 is_member() 로 막혀 있습니다.
 --
--- stale = 집어 간 뒤 p_stale_minutes 분이 지나도 안 끝난 요청. 수집 Mac 이
--- 잠들었거나 프로세스가 죽은 것이고, 감시 작업이 실패로 정리합니다.
+-- stale = 집어 간 뒤 p_stale_minutes 분이 지나도 안 끝난 요청. 수집하던 PC 가
+-- 잠들었거나 프로세스가 죽은 것이고, 다음 확인이 실패로 정리합니다.
 create or replace function public.desk_scan_waiting(p_stale_minutes int default 10)
 returns table (pending int, stale int)
 language sql
@@ -1853,3 +1865,43 @@ $$;
 
 revoke all on function public.desk_scan_waiting(int) from public;
 grant execute on function public.desk_scan_waiting(int) to anon, authenticated;
+
+-- ----------------------------------------------------------------------------
+-- 25.2 에이전트(service_role)의 권한 — 명시합니다
+-- ----------------------------------------------------------------------------
+-- 에이전트가 스냅샷을 올리고(desk_snapshots) 요청을 집고 결과를 적습니다
+-- (desk_scan_requests). service_role 은 RLS 를 우회하지만 **표 권한(GRANT)은
+-- 우회하지 않습니다.** Supabase 가 새 표에 자동으로 다는 기본 권한에 기대면 다른
+-- 환경에서 조용히 막힙니다 — 17장(app_secrets)과 같은 이유로 명시합니다.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant select, insert, update on table public.desk_snapshots to service_role';
+    execute 'grant select on public.desk_snapshot_days to service_role';
+    execute 'grant select, update on table public.desk_scan_requests to service_role';
+  end if;
+end;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 25.3 desk 상태 — 에이전트가 적고 화면이 읽습니다 (비밀이 아닌 값만)
+-- ----------------------------------------------------------------------------
+-- 쿠키 **값**은 app_secrets(17장)에만 있습니다 — 키 이름 desk_cf_authorization,
+-- 웹은 set_app_secret 으로 넣기만 합니다. 여기 두는 것은 그 쿠키에서 읽은 **만료일**과
+-- 마지막 수집 결과뿐이고, 팀원 전원이 읽습니다(15.9 settings_read). 만료를 놓쳐
+-- 수집이 11~12일씩 빈 적이 두 번 있어서, 화면이 만료 7일 전부터 배너로 알립니다.
+--
+-- 값은 에이전트가 upsert 합니다. 행을 미리 만드는 것은 설명을 붙여 두기 위해서입니다.
+-- 이름은 contracts/desk/constants.json 의 setting_keys 와 같아야 합니다.
+insert into public.app_settings (key, value, description) values
+  ('desk_auth_source', '',
+   'desk 인증 출처 (에이전트가 적음). service_token | settings(설정 화면 쿠키) | env(.env 쿠키) | none. 비어 있으면 에이전트가 아직 안 적었습니다'),
+  ('desk_cookie_expires_at', '',
+   'desk 쿠키(JWT exp) 만료 시각 ISO8601 (에이전트가 적음). 쿠키 값은 app_secrets 에만 있습니다'),
+  ('desk_last_scan_at', '',
+   '마지막 desk 수집 시각 ISO8601 (에이전트가 적음)'),
+  ('desk_last_scan_ok', '',
+   '마지막 desk 수집 성공 여부 true | false (에이전트가 적음). 성공은 대시보드에 올라갔을 때만입니다'),
+  ('desk_last_scan_note', '',
+   '마지막 desk 수집 한 줄 — 성공이면 스냅샷 날짜, 실패면 비밀값을 가린 이유 (에이전트가 적음)')
+on conflict (key) do nothing;

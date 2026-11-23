@@ -833,9 +833,9 @@ export async function fetchManualIntakes(limit = 20): Promise<ManualIntakeRow[]>
 
 /**
  * desk 는 **별개 시스템**입니다. 그 업무 현황을 이 대시보드에서 보려면 누군가
- * 스냅샷을 올려 줘야 하는데, desk 인증이 특정 Mac 의 Chrome 쿠키라 수집이 그
- * Mac 을 벗어날 수 없습니다. `reporter/` 가 주 2회 올리고, 주간보고서를 만들 때는
- * 화면이 수집 요청을 넣어 그 자리에서 한 번 더 받습니다 (아래 수집 요청).
+ * 스냅샷을 올려 줘야 합니다. 사내 PC 의 에이전트가 관리자가 설정 화면에 붙여 넣은
+ * desk 쿠키로 주 2회 올리고, 주간보고서를 만들 때는 화면이 수집 요청을 넣어 그
+ * 자리에서 한 번 더 받습니다 (아래 수집 요청 · docs/DESIGN.md 14장).
  *
  * 스냅샷 하나가 수백 KB 라 **목록은 뷰(state 제외)로 봅니다.**
  */
@@ -880,7 +880,7 @@ export async function fetchSnapshotsByDays(days: string[]): Promise<DeskSnapshot
  * 수집 요청 표가 아직 DB 에 없습니다 (schema.sql 25장 미적용).
  *
  * 화면이 깨지지 않고 **그 사실을 밝히도록** 따로 구분합니다. 일반 오류와 섞으면
- * '수집 실패' 로 보여서 수집 PC 를 의심하게 됩니다.
+ * '수집 실패' 로 보여서 에이전트를 의심하게 됩니다.
  */
 export class ScanQueueMissingError extends Error {
   constructor() {

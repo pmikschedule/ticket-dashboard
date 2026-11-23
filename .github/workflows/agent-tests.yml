@@ -4,10 +4,15 @@ on:
   push:
     paths:
       - 'agent/**'
+      # 테스트가 계약 자료(contracts/desk)와 schema.sql 을 읽습니다
+      - 'contracts/**'
+      - 'supabase/schema.sql'
       - '.github/workflows/agent-tests.yml'
   pull_request:
     paths:
       - 'agent/**'
+      - 'contracts/**'
+      - 'supabase/schema.sql'
   workflow_dispatch:
 
 jobs:

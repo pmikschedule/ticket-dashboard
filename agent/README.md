@@ -3,6 +3,10 @@
 아웃룩 메일을 읽어 티켓으로 적재하고, 완료된 티켓의 회신을 발송합니다.
 관리자 PC(Windows + Outlook 데스크톱)에서 상시 실행하는 것을 전제로 합니다.
 
+0.5.0 부터 `run` 은 **desk 수집**도 합니다 — 주간보고서 화면이 넣는 수집 요청과
+정기 수집(월 18:00 · 화 09:00). 메일과 따로 도는 스레드라 desk 가 실패해도 메일
+수집은 멈추지 않습니다 ([`../docs/DESIGN.md`](../docs/DESIGN.md) 14장).
+
 설치 절차는 [`../docs/SETUP.md`](../docs/SETUP.md) 8장에 있습니다.
 
 ## 명령
@@ -13,7 +17,9 @@ ticket-agent collect                # 메일 1회 스캔
 ticket-agent collect --watch        # 주기 스캔 (--interval 초, 최소 30)
 ticket-agent send                   # 발송 큐 1회 처리
 ticket-agent send --watch           # 발송 큐 상시 감시
-ticket-agent run                    # 수집 + 발송 상시 실행 (운영 기본)
+ticket-agent run                    # 수집 + 발송 + desk 수집 상시 실행 (운영 기본)
+ticket-agent desk-scan              # desk 1회 수집 + 대시보드 업로드
+ticket-agent desk-scan --dry-run    # desk 받기·행 만들기만 (저장·업로드 안 함)
 ```
 
 `--env-file` 로 다른 `.env` 를 지정할 수 있습니다.
@@ -32,6 +38,9 @@ src/ticket_agent/
 ├─ collector.py     수집 파이프라인
 ├─ summarize.py     회신 본문 작성  ★순수
 ├─ sender.py        발송 파이프라인
+├─ secrets.py       자격증명 출처 고르기 (설정 화면 > .env) — Gemini 키, desk 인증  ★순수
+├─ desk.py          desk 응답·스냅샷 행·업로드 판정·정기 회차·로컬 사본  ★순수(+로컬 파일)
+├─ desk_worker.py   desk 스레드 — 수집 요청 큐 · 정기 수집 · 인증 상태 알림
 └─ mail/
    ├─ base.py       MailClient 인터페이스
    ├─ outlook.py    운영 (pywin32, Windows 전용)
@@ -61,8 +70,11 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-114개. 전부 Outlook·Supabase·Gemini API 없이 돕니다 —
+343개. 전부 Outlook·Supabase·Gemini API·desk 없이 돕니다 —
 외부 의존은 가짜 객체로 대체하고, 나머지는 순수 함수입니다.
+
+desk 쪽은 저장소 루트 `contracts/desk/*.json` 을 웹·reporter 테스트와 **함께** 읽습니다.
+같은 입력에 같은 행·같은 판정을 내는지 세 구현을 한 자료로 맞춥니다.
 
 ## 자주 걸리는 것
 
@@ -71,4 +83,5 @@ pytest -q
 | `pywin32 를 불러올 수 없습니다` | Windows 가 아니거나 `pip install pywin32` 누락. 개발 중이면 `AGENT_MAIL_BACKEND=fixture` |
 | `아웃룩 폴더를 찾지 못했습니다` | 폴더명 오타. 오류 메시지가 같은 위치의 실제 폴더 목록을 알려줍니다 |
 | 같은 메일이 계속 티켓이 됨 | `tickets.source_message_id` 유니크 제약 누락 → `schema.sql` 재실행 |
+| doctor 의 `■ desk 수집` 이 ⚠️ | 경고일 뿐 에이전트는 뜹니다. 쿠키 없음·만료면 웹 설정 → desk 인증에 넣습니다 |
 | 티켓은 생기는데 등급이 전부 medium/etc | LLM 호출이 실패하고 기본값으로 적재된 것. 상세 화면의 `⚠ 자동분류 실패` 배지와 `llm_error` 확인 |

@@ -34,7 +34,7 @@ function req(over: Partial<ScanRequestRow>): ScanRequestRow {
 }
 
 describe('수집 요청 상태 코드값', () => {
-  it('schema.sql 25장 · reporter/src/types.ts 와 같은 네 값입니다', () => {
+  it('schema.sql 25장 · 에이전트 constants.py · reporter/src/types.ts 와 같은 네 값입니다', () => {
     expect([...SCAN_REQUEST_STATUSES]).toEqual(['pending', 'running', 'done', 'failed'])
   })
 })
@@ -93,7 +93,7 @@ describe('judgePoll — 기다리는 요청의 지금 상태', () => {
     expect(judgePoll(req({ status: 'done', snapshot_day: '2026-11-23' }), 5_000)).toEqual({ kind: 'done', day: '2026-11-23' })
   })
 
-  it('실패했으면 수집 PC 가 적은 이유를 그대로 보여 줍니다', () => {
+  it('실패했으면 에이전트가 적은 이유를 그대로 보여 줍니다', () => {
     const v = judgePoll(req({ status: 'failed', error: '쿠키가 만료됐습니다' }), 5_000)
     expect(v).toEqual({ kind: 'failed', reason: '쿠키가 만료됐습니다' })
   })
@@ -112,10 +112,10 @@ describe('judgePoll — 기다리는 요청의 지금 상태', () => {
     expect(judgePoll(req({ status: 'running' }), 20_000)).toEqual({ kind: 'waiting', phase: 'running', elapsedSec: 20 })
   })
 
-  it('상한을 넘기면 시간 초과 — 아무도 안 집었으면 수집 PC 를 말합니다', () => {
+  it('상한을 넘기면 시간 초과 — 아무도 안 집었으면 에이전트를 말합니다', () => {
     const v = judgePoll(req({ status: 'pending' }), SCAN_WAIT_MS)
     expect(v.kind).toBe('timeout')
-    expect(v.kind === 'timeout' && v.reason).toContain('수집 PC')
+    expect(v.kind === 'timeout' && v.reason).toContain('에이전트')
   })
 
   it('수집 중에 상한을 넘기면 수집이 늦다고 말합니다', () => {

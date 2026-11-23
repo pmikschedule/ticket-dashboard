@@ -50,6 +50,18 @@ def _optional_int(name: str) -> int | None:
         raise ConfigError(f"{name} 은 정수여야 합니다 (받은 값: {raw!r})") from exc
 
 
+def _switch(name: str, default: bool) -> bool:
+    """켜고 끄는 값. on/off · true/false · 1/0 · yes/no 를 받습니다."""
+    raw = _optional(name).lower()
+    if not raw:
+        return default
+    if raw in ("1", "true", "on", "yes"):
+        return True
+    if raw in ("0", "false", "off", "no"):
+        return False
+    raise ConfigError(f"{name} 은 on | off 중 하나여야 합니다 (받은 값: {raw!r})")
+
+
 def _csv(name: str) -> list[str]:
     raw = _optional(name)
     return [item.strip() for item in raw.split(",") if item.strip()]
@@ -121,6 +133,18 @@ class Config:
 
     log_level: str = "INFO"
 
+    # ── desk 수집 (DESIGN.md 14장) ──────────────────────────────────────────
+    #: 꺼 두면 `run` 이 desk 스레드를 띄우지 않습니다. 메일 수집과는 무관합니다.
+    desk_scan_enabled: bool = True
+    desk_url: str = "https://desk.saebom.me"
+    #: 아래 셋은 .env 의 값입니다. **최종 값이 아닙니다** — 설정 화면(app_secrets)에
+    #: 있으면 그쪽이 이깁니다. 확정은 secrets.resolve_desk_auth() 가 합니다.
+    desk_cf_authorization: str = field(default="", repr=False)
+    desk_cf_client_id: str = field(default="", repr=False)
+    desk_cf_client_secret: str = field(default="", repr=False)
+    #: 스냅샷 사본(desk-snapshots/)과 정기 회차 기록(desk-state.json)을 두는 곳
+    desk_data_dir: Path = Path("data")
+
     @property
     def sends_immediately(self) -> bool:
         return self.send_mode == "send"
@@ -168,4 +192,10 @@ def load_config(env_file: str | os.PathLike[str] | None = None) -> Config:
             _optional("FIXTURE_OUTBOX_DIR", ".fixture-outbox") or ".fixture-outbox"
         ),
         log_level=(_optional("LOG_LEVEL", "INFO") or "INFO").upper(),
+        desk_scan_enabled=_switch("DESK_SCAN", True),
+        desk_url=_optional("DESK_URL", "https://desk.saebom.me") or "https://desk.saebom.me",
+        desk_cf_authorization=_optional("DESK_CF_AUTHORIZATION"),
+        desk_cf_client_id=_optional("DESK_CF_CLIENT_ID"),
+        desk_cf_client_secret=_optional("DESK_CF_CLIENT_SECRET"),
+        desk_data_dir=Path(_optional("DESK_DATA_DIR", "data") or "data"),
     )

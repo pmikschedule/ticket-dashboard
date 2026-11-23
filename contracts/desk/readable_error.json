@@ -1,0 +1,65 @@
+{
+  "설명": "팀원 전원이 읽는 desk_scan_requests.error 에 들어갈 문장 — 토큰처럼 생긴 것을 가립니다. 기대값은 reporter/src/requests.ts readableError 로 계산했습니다. 입력은 전부 가상입니다.",
+  "cases": [
+    {
+      "name": "평문은 그대로",
+      "input": "desk 응답이 HTTP 503 입니다",
+      "expected": "desk 응답이 HTTP 503 입니다"
+    },
+    {
+      "name": "쿠키 헤더 값",
+      "input": "요청 실패 — Cookie: CF_Authorization=eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg; theme=dark",
+      "expected": "요청 실패 — Cookie: CF_Authorization=•••; theme=dark"
+    },
+    {
+      "name": "JWT 단독",
+      "input": "토큰 eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg 이 거부됐습니다",
+      "expected": "토큰 ••• 이 거부됐습니다"
+    },
+    {
+      "name": "한글에 바로 붙은 JWT — \\w 는 ASCII 만",
+      "input": "토큰eyJabc.def오류",
+      "expected": "토큰•••오류"
+    },
+    {
+      "name": "Bearer",
+      "input": "Authorization: Bearer abc.def-123 실패",
+      "expected": "Authorization: Bearer ••• 실패"
+    },
+    {
+      "name": "Supabase 키",
+      "input": "키 sb_secret_AbCdEf123_xyz 와 sb_publishable_Q1w2E3 노출",
+      "expected": "키 sb_secret_••• 와 sb_publishable_••• 노출"
+    },
+    {
+      "name": "33자 넘는 영숫자 덩어리",
+      "input": "client secret 0123456789abcdef0123456789abcdef01 거부",
+      "expected": "client secret ••• 거부"
+    },
+    {
+      "name": "32자는 남깁니다",
+      "input": "id 0123456789abcdef0123456789abcdef 확인",
+      "expected": "id 0123456789abcdef0123456789abcdef 확인"
+    },
+    {
+      "name": "대소문자 무시",
+      "input": "cf_authorization=abc; bearer xyz 끝",
+      "expected": "CF_Authorization=•••; Bearer ••• 끝"
+    },
+    {
+      "name": "줄바꿈·탭은 공백 하나로",
+      "input": "첫 줄\n\n   둘째 줄\t끝  ",
+      "expected": "첫 줄 둘째 줄 끝"
+    },
+    {
+      "name": "빈 문자열",
+      "input": "",
+      "expected": "이유가 기록되지 않은 오류"
+    },
+    {
+      "name": "300자 넘으면 자르고 말줄임",
+      "input": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가",
+      "expected": "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가…"
+    }
+  ]
+}

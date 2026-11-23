@@ -3,6 +3,12 @@
 desk 를 주기적으로 떠서 **스냅샷을 쌓고 대시보드에 올립니다.** 그 위에 월간
 보고서와 업무 전수 목록을 만듭니다.
 
+> **desk 수집은 2026-11-23 부터 에이전트(사내 윈도우 PC · ticket-agent 0.5.0)가 합니다**
+> — 정기 수집과 화면의 수집 요청 둘 다 ([docs/DESIGN.md](../docs/DESIGN.md) 14장).
+> 이 도구의 `scan`·`push`·`requests` 와 아래 launchd 는 **비상용으로 남겨 두었고**,
+> 전환을 확인한 뒤 정리합니다. 두 구현이 같은 행을 만드는지는 `tests/contracts.test.ts`
+> 가 저장소 루트 `contracts/desk/*.json` 으로 검사합니다 — 에이전트·웹도 같은 파일을 읽습니다.
+
 > **주간 보고서는 여기 없습니다.** 이슈트래커의 `태스크맵` 화면에서 만듭니다
 > (`web/src/lib/report/`). 집계 규칙을 두 벌 두면 갈라지기 때문에, 주간 쪽
 > 코드는 통째로 그쪽으로 옮겼습니다. 이 도구가 할 일은 그 화면이 볼 스냅샷을
@@ -43,7 +49,7 @@ npm run requests          # 화면에서 들어온 수집 요청 처리 (감시 
 npm run monthly           # 지난달 보고서 생성
 npm run monthly 2026-08   # 특정 달
 npm run list              # 업무 전수 목록 xlsx (프로젝트별 · 담당자별)
-npm test                  # 집계·레이아웃 195개 + 타입체크
+npm test                  # 집계·레이아웃·계약 247개 + 타입체크
 ```
 
 터미널을 안 쓸 때는 **`start-reporter.command` 를 더블클릭**합니다. Node 버전과

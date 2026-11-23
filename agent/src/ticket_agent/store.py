@@ -11,9 +11,16 @@ import mimetypes
 from datetime import datetime, timezone
 from typing import Any
 
-from supabase import Client, create_client
+from postgrest.types import ReturnMethod
+from supabase import Client, ClientOptions, create_client
 
-from .constants import FALLBACK_STATUS
+from .constants import (
+    FALLBACK_STATUS,
+    SCAN_REQUEST_DONE,
+    SCAN_REQUEST_FAILED,
+    SCAN_REQUEST_PENDING,
+    SCAN_REQUEST_RUNNING,
+)
 from .models import Attachment, Classification, ManualIntake, OutboundEmail, RawMail
 from .textutil import sanitize_filename
 
@@ -29,8 +36,20 @@ def _iso(value: datetime | None) -> str:
 
 
 class TicketStore:
-    def __init__(self, url: str, service_key: str, bucket: str) -> None:
-        self._client: Client = create_client(url, service_key)
+    def __init__(
+        self, url: str, service_key: str, bucket: str, timeout: float | None = None
+    ) -> None:
+        """`timeout` 은 DB 요청 한 번의 상한(초). 비우면 라이브러리 기본값(120초)입니다.
+
+        desk 스레드는 30초를 줍니다 — 스캔 한 번에 3분 상한이 있어서, 요청 하나가
+        2분씩 매달리면 그 상한을 지킬 수 없습니다.
+        """
+        if timeout is None:
+            self._client: Client = create_client(url, service_key)
+        else:
+            self._client = create_client(
+                url, service_key, options=ClientOptions(postgrest_client_timeout=timeout)
+            )
         self._bucket = bucket
 
     # ── 티켓 ────────────────────────────────────────────────────────────────
@@ -274,6 +293,25 @@ class TicketStore:
         except Exception as exc:
             log.warning("설정 '%s' 을 쓰지 못했습니다: %s", key, exc)
 
+    def set_settings(self, values: dict[str, str]) -> bool:
+        """설정 여러 건을 **한 번에** 씁니다. 성공 여부를 돌려줍니다 — 예외는 안 던집니다.
+
+        desk 상태(인증 출처·만료일·마지막 수집)를 화면에 알리는 데 씁니다. 못 써도
+        수집 자체는 계속돼야 하므로 경고만 남깁니다.
+        """
+        if not values:
+            return True
+        try:
+            self._client.table("app_settings").upsert(
+                [{"key": k, "value": v} for k, v in values.items()],
+                on_conflict="key",
+                returning=ReturnMethod.minimal,
+            ).execute()
+            return True
+        except Exception as exc:
+            log.warning("설정 %s 을 쓰지 못했습니다: %s", ", ".join(values), exc)
+            return False
+
     def setting(self, key: str, default: str = "") -> str:
         """app_settings 한 건. 없거나 실패하면 기본값."""
         try:
@@ -289,6 +327,119 @@ class TicketStore:
         except Exception as exc:
             log.warning("설정 '%s' 을 읽지 못했습니다. 기본값 사용: %s", key, exc)
             return default
+
+    def secrets(self, keys: list[str]) -> dict[str, str]:
+        """비밀값 여러 건을 한 번에. 없거나 실패하면 빈 사전 — 호출자가 .env 로 갑니다.
+
+        `secret()` 과 같은 이유로 service_role 이라서만 읽힙니다. 값은 로그에 안 남깁니다.
+        """
+        try:
+            response = (
+                self._client.table("app_secrets").select("key, value").in_("key", list(keys)).execute()
+            )
+            return {
+                row["key"]: (row.get("value") or "")
+                for row in (response.data or [])
+                if row.get("key")
+            }
+        except Exception as exc:
+            log.warning("비밀값 %s 을 읽지 못했습니다: %s", ", ".join(keys), exc)
+            return {}
+
+    # ── desk 수집 (schema.sql 24·25장 · DESIGN.md 14장) ───────────────────────
+    #
+    # 아래는 **실패하면 던집니다.** desk 스레드가 받아 이유를 사람이 읽을 문장으로
+    # 바꿔 남깁니다 (desk_worker.py). 표가 없는지(25장 미적용)도 거기서 가립니다.
+
+    def open_scan_requests(self) -> list[dict[str, Any]]:
+        """대기·진행 중인 수집 요청. 할 일이 없으면 빈 목록 — 10초마다 부르는 쿼리라 가볍게."""
+        response = (
+            self._client.table("desk_scan_requests")
+            .select("id, status, started_at")
+            .in_("status", [SCAN_REQUEST_PENDING, SCAN_REQUEST_RUNNING])
+            .execute()
+        )
+        return response.data or []
+
+    def fail_stale_scan_requests(self, cutoff_iso: str, now_iso: str, reason: str) -> int:
+        """`cutoff` 전에 집어 가서 아직 안 끝난 요청을 실패로 닫습니다. 닫은 건수."""
+        response = (
+            self._client.table("desk_scan_requests")
+            .update({"status": SCAN_REQUEST_FAILED, "finished_at": now_iso, "error": reason})
+            .eq("status", SCAN_REQUEST_RUNNING)
+            .lt("started_at", cutoff_iso)
+            .execute()
+        )
+        return len(response.data or [])
+
+    def claim_scan_requests(self, now_iso: str) -> list[int]:
+        """대기 요청을 **한 번의 update 로 전부** 집습니다.
+
+        `where status = 'pending'` 이 조건이라, 같은 순간 다른 쪽(전환 중인 reporter 등)이
+        집었으면 Postgres 가 행을 다시 확인해 0건이 돌아옵니다 — 한 요청이 두 번
+        처리되지 않습니다. 밀린 요청이 여럿이어도 스캔은 한 번이면 됩니다.
+        """
+        response = (
+            self._client.table("desk_scan_requests")
+            .update({"status": SCAN_REQUEST_RUNNING, "started_at": now_iso})
+            .eq("status", SCAN_REQUEST_PENDING)
+            .execute()
+        )
+        return sorted(int(row["id"]) for row in (response.data or []))
+
+    def finish_scan_requests(
+        self,
+        ids: list[int],
+        ok: bool,
+        now_iso: str,
+        day: str | None = None,
+        error: str | None = None,
+    ) -> None:
+        """집은 요청들에 결과를 적습니다. `error` 는 readable_error 를 거친 문장이어야 합니다."""
+        if not ids:
+            return
+        if ok:
+            patch: dict[str, Any] = {
+                "status": SCAN_REQUEST_DONE,
+                "finished_at": now_iso,
+                "snapshot_day": day,
+                "error": None,
+            }
+        else:
+            patch = {"status": SCAN_REQUEST_FAILED, "finished_at": now_iso, "error": error}
+        (
+            self._client.table("desk_scan_requests")
+            .update(patch, returning=ReturnMethod.minimal)
+            .in_("id", ids)
+            .execute()
+        )
+
+    def uploaded_snapshot_days(self) -> dict[str, str]:
+        """대시보드에 이미 올라간 날짜 → 그 스캔 시각. 본문(state)은 안 받습니다."""
+        response = self._client.table("desk_snapshots").select("day, scanned_at").execute()
+        return {
+            str(row["day"]): str(row["scanned_at"])
+            for row in (response.data or [])
+            if row.get("day") and row.get("scanned_at")
+        }
+
+    def upload_snapshot(self, row: dict[str, Any]) -> None:
+        """스냅샷 한 개. 같은 날이 있으면 덮어씁니다 — 돌려받지 않습니다(수백 KB)."""
+        self._client.table("desk_snapshots").upsert(
+            row, on_conflict="day", returning=ReturnMethod.minimal
+        ).execute()
+
+    def latest_snapshot_day(self) -> str | None:
+        """대시보드에 올라간 가장 최근 날짜. doctor 가 스냅샷 나이를 볼 때 씁니다."""
+        response = (
+            self._client.table("desk_snapshots")
+            .select("day")
+            .order("day", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = response.data or []
+        return str(rows[0]["day"]) if rows else None
 
     # ── 스크리닝 ────────────────────────────────────────────────────────────
     def record_scanned_mail(

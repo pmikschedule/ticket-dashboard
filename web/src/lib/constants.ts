@@ -273,10 +273,10 @@ export const SCAN_OUTCOME_LABELS: Record<ScanOutcome, string> = {
 /**
  * desk 수집 요청 상태 (`desk_scan_requests.status`, schema.sql 25장).
  *
- * 웹이 `pending` 으로 넣고, 수집 Mac 의 감시 작업(reporter `npm run requests`)이
- * `running` → `done`·`failed` 로 옮깁니다. **reporter/src/types.ts 의 같은 이름과
- * 값이 같아야 합니다** — 다르면 그쪽 저장이 check 제약에 걸려 요청이 `running` 에
- * 멈추고, 화면은 시간 초과로 끝납니다. 에이전트는 이 표를 안 씁니다.
+ * 웹이 `pending` 으로 넣고, 에이전트(`ticket-agent run` 의 desk 스레드)가
+ * `running` → `done`·`failed` 로 옮깁니다. **에이전트 constants.py · reporter/src/types.ts
+ * 의 같은 이름과 값이 같아야 합니다** — 다르면 그쪽 저장이 check 제약에 걸려 요청이
+ * `running` 에 멈추고, 화면은 시간 초과로 끝납니다 (contracts/desk/constants.json).
  */
 export const SCAN_REQUEST_STATUSES = ['pending', 'running', 'done', 'failed'] as const
 export type ScanRequestStatus = (typeof SCAN_REQUEST_STATUSES)[number]

@@ -333,6 +333,8 @@ notepad .env
   여기에 적으세요 — 그대로 동작합니다 (5-4 참고)
 - `AGENT_MAIL_BACKEND=auto` — Windows 에서는 자동으로 `outlook` 이 됩니다
 - `AGENT_SEND_MODE=display` — 회신은 사람이 확인하고 보냅니다. 자동 발송은 되돌릴 수 없습니다
+- `DESK_*` — desk 수집(주간보고서용, 12장). 쿠키는 **웹 설정 화면 → desk 인증** 에 넣는 것이
+  기본이라 여기는 비워 둡니다. 끄려면 `DESK_SCAN=off`
 
 > `SUPABASE_SERVICE_KEY` 는 RLS 를 우회합니다. **이 파일 밖으로 나가면 안 됩니다** —
 > 저장소·웹·채팅 어디에도 넣지 마세요. `agent/.env` 는 `.gitignore` 에 걸려 있습니다.
@@ -366,7 +368,16 @@ ticket-agent doctor
 ✅ Supabase — 연결 성공
 ✅ 메일 백엔드 — '받은 편지함/요청' 접근 성공 (표본 1건)
 ✅ Gemini API — 모델 'gemini-2.5-flash' 사용 가능
+
+■ desk 수집 (경고만 — 여기가 실패해도 메일 수집은 그대로 돕니다)
+✅ desk 인증 — 쿠키 (설정 화면, ••••••••x9Qk) · 만료 2026-12-23 10:00 한국 시각 (29일 남음)
+✅ desk 연결 — https://desk.saebom.me · 업무 105건
+✅ 수집 요청 표 — 대기·진행 0건
+✅ 대시보드 스냅샷 — 최신 2026-11-24 (0일 전)
 ```
+
+`■ desk 수집` 아래는 **경고(⚠️)만** 냅니다 — 결과에 넣지 않으므로 에이전트는 그대로 뜹니다.
+조치는 12장.
 
 | 증상 | 원인 |
 |---|---|
@@ -555,45 +566,84 @@ gh run watch
 
 ---
 
-## 12. 주간보고서 자동 갱신 — desk 수집 요청
+## 12. 주간보고서용 desk 수집 — 에이전트
 
-태스크맵 화면의 **주간보고서 생성**은 먼저 desk 최신 현황을 받아 옵니다. 브라우저는
-desk 를 못 읽으므로(쿠키가 수집 Mac 의 Chrome 에만 있습니다) 요청을 DB 에 넣고, 수집
-Mac 의 감시 작업이 처리합니다 (설계는 [DESIGN.md](DESIGN.md) 13장). 두 가지가 있어야 합니다.
+태스크맵 화면의 **주간보고서 생성**은 먼저 desk 최신 현황을 받아 옵니다. 브라우저는 desk
+를 못 읽으므로 요청을 DB 에 넣고, **에이전트**(0.5.0 부터 `run` 의 desk 스레드)가 10초마다
+집어 desk 를 읽어 올립니다. 정기 수집(월 18:00 · 화 09:00 한국 시각)도 에이전트가 합니다.
+설계는 [DESIGN.md](DESIGN.md) 13·14장. 세 가지가 있어야 합니다.
 
 ### 12-1. 스키마 (25장)
 
 SQL Editor 에서 [`supabase/schema.sql`](../supabase/schema.sql) **전체를 다시 실행**합니다
-(재실행 안전). 25장이 `desk_scan_requests` 표·RLS·`desk_scan_waiting` 함수를 만듭니다.
+(재실행 안전). 25장이 `desk_scan_requests` 표·RLS·`desk_scan_waiting` 함수를, 25.2 가
+에이전트(service_role)의 표 권한을, 25.3 이 desk 상태 설정 행(`desk_*`)을 만듭니다.
 
 ```sql
 select tablename from pg_tables where schemaname = 'public' and tablename = 'desk_scan_requests';
-select proname from pg_proc where proname = 'desk_scan_waiting';
--- 둘 다 나와야 합니다
+select key from public.app_settings where key like 'desk_%' order by key;
+-- 표 하나와 desk_ 설정 다섯 줄이 나와야 합니다
 ```
 
-없으면 화면은 깨지지 않고 "수집 요청 표가 아직 DB 에 없습니다" 를 띄운 뒤,
-'기존 수집본(MM/DD)으로 생성' 을 눌러야 만듭니다.
+없으면 화면은 깨지지 않고 "수집 요청 표가 아직 DB 에 없습니다" 를 띄운 뒤 '기존
+수집본(MM/DD)으로 생성' 을 눌러야 만듭니다. 에이전트는 한 시간에 한 번 같은 경고를 적고,
+정기 수집은 그대로 합니다(24장만 있으면 됩니다).
 
-### 12-2. 수집 Mac 의 감시 작업
+### 12-2. 에이전트 0.5.0
 
-```bash
-cd ~/PMS/reporter
-cp scripts/me.saebom.reporter.requests.plist ~/Library/LaunchAgents/
-launchctl bootstrap gui/$UID ~/Library/LaunchAgents/me.saebom.reporter.requests.plist
-launchctl print gui/$UID/me.saebom.reporter.requests | grep -E 'state|last exit'
+오프라인 꾸러미라면 **`src` 만** 바꿉니다 — `ticket-agent-src-0.5.0.zip` 을 풀어 나온
+`src` 폴더를 설치 폴더(`C:\ticket-agent\`)에 덮어씁니다. `lib\`·`.env`·`data\` 는
+건드리지 않습니다. `.env` 에 더할 값은 없습니다(기본값으로 돕니다). 꾸러미 안
+`READ-ME-FIRST.txt` 7장에 같은 절차가 있습니다.
+
+`run-agent.bat` 을 다시 실행하면 doctor 첫 줄이 `에이전트 버전 : 0.5.0` 이고 `■ desk 수집`
+줄이 더 나옵니다.
+
+### 12-3. desk 쿠키 넣기 (관리자)
+
+desk 는 Cloudflare Access(메일 인증) 뒤에 있어 사람이 브라우저로 로그인해 받은
+`CF_Authorization` 쿠키로 읽습니다.
+
+1. desk 에 로그인한 브라우저에서 **F12 → Application(애플리케이션) → Cookies → desk 주소 →
+   `CF_Authorization`** 의 값(Value, `eyJ…`)을 복사
+2. 대시보드 **설정 → desk 인증 → 등록** 에 붙여 넣기 — 입력칸 아래에 만료일이 미리 보입니다.
+   `CF_Authorization=…` 이나 쿠키 헤더 통째로 붙여 넣어도 값만 골라 넣습니다
+3. 1분 안에 그 카드의 '에이전트가 쓰는 인증' 과 '마지막 수집' 이 바뀝니다 (`상태 새로고침`)
+
+Gemini 키처럼 **넣을 수만 있고 꺼낼 수 없습니다** (마지막 4글자만). 한 달쯤 가고, 만료
+7일 전부터 모든 화면 위에 배너가 뜹니다. 그때 같은 방법으로 교체합니다.
+
+에이전트 `.env` 의 `DESK_CF_AUTHORIZATION` 에 넣어도 되지만, 두 곳에 다 있으면 **설정
+화면이 이깁니다.** desk 관리자가 Cloudflare Service Token 을 발급해 주면
+`DESK_CF_CLIENT_ID`·`DESK_CF_CLIENT_SECRET` 에 넣습니다 — 쿠키보다 먼저 쓰고 만료가 없습니다.
+
+### 12-4. 확인
+
+사내 PC 에서:
+
+```powershell
+python run.py desk-scan --dry-run   # 받기·행 만들기만 (저장·업로드 안 함)
+python run.py desk-scan             # 한 번 받아 대시보드에 올림
 ```
 
-30초마다 `npm run requests` 를 부릅니다. 할 일이 없으면 로그인 없이 쿼리 한 번으로
-끝나고 아무것도 안 찍습니다. 처리 기록은 `reporter/data/requests.log`.
-정기 스캔(`me.saebom.reporter`)은 그대로 둡니다. `npm run doctor` 가 표와 감시 작업을
-함께 봅니다.
+그다음 태스크맵 화면에서 **주간보고서 생성** — "에이전트 응답 대기" 가 몇 초 안에
+"읽는 중" 으로 바뀌고 만들어지면 됩니다.
 
 | 증상 | 원인 |
 |---|---|
-| 화면이 2분 기다리다 "수집 PC 가 요청을 받지 않았습니다" | 수집 Mac 이 잠들었거나 꺼져 있거나 감시 작업 미등록 |
-| "쿠키가 … 만료됐습니다" | 수집 Mac 의 Chrome 으로 desk 에 다시 로그인 |
-| `requests.log` 에 "수집 요청 표가 DB 에 없습니다" (한 시간에 한 번) | 12-1 미적용 |
+| 화면이 2분 기다리다 "에이전트가 요청을 받지 않았습니다" | 사내 PC 의 에이전트 창이 닫혔거나, PC 가 잠들었거나, 0.5.0 이전 버전 |
+| "desk 인증이 없습니다" | 12-3 미실행. 설정 화면에 쿠키를 넣습니다 |
+| "desk 인증 만료" / "desk 쿠키가 … 에 만료됐습니다" | 브라우저로 desk 에 다시 로그인해 새 쿠키를 넣습니다. 넣으면 에이전트가 1분 안에 확인 수집을 한 번 합니다 |
+| "desk 에 연결하지 못했습니다" | 사내 PC 에서 desk 주소가 막혔거나 프록시가 필요합니다. 에이전트는 Supabase 와 같은 길(httpx · 시스템 프록시 환경 변수)로 나갑니다 |
+| "스냅샷은 수집했지만 대시보드에 올리지 못했습니다" | 25.2 미적용이거나 Supabase 장애. 로컬 `data\desk-snapshots\` 에 남은 것은 다음 수집 때 다시 올라갑니다 |
+| 에이전트 콘솔에 "수집 요청 표가 DB 에 없습니다" (한 시간에 한 번) | 12-1 미적용 |
+
+### 12-5. Mac 의 reporter (비상용)
+
+전에는 Mac 의 reporter 가 같은 일을 했습니다(launchd `me.saebom.reporter` ·
+`me.saebom.reporter.requests`). **아직 그대로 두었습니다** — 둘이 함께 돌아도 한 요청은
+한 번만 처리되고 같은 날 스냅샷은 늦게 뜬 쪽이 남습니다. 에이전트로 며칠 돌려 본 뒤 Mac
+쪽을 끕니다(별도 작업). 에이전트를 못 쓸 때는 그 Mac 에서 `cd reporter && npm run scan`.
 
 ---
 
@@ -634,7 +684,7 @@ launchctl print gui/$UID/me.saebom.reporter.requests | grep -E 'state|last exit'
 cd web
 npm install
 npm run dev      # 개발 서버
-npm test         # 순수 로직 단위 테스트 83개
+npm test         # 순수 로직 단위 테스트 415개
 npm run build    # 타입체크 + 프로덕션 빌드
 
 # 에이전트
@@ -643,6 +693,11 @@ pip install -e ".[dev]"
 ticket-agent doctor    # 설정·연결 점검
 ticket-agent collect   # 메일 1회 스캔
 ticket-agent send      # 발송 큐 1회 처리
-ticket-agent run       # 수집 + 발송 상시 실행
-pytest -q              # 단위 테스트 103개
+ticket-agent run       # 수집 + 발송 + desk 수집 상시 실행
+ticket-agent desk-scan --dry-run   # desk 받기·행 만들기만
+ticket-agent desk-scan             # desk 1회 수집 + 업로드
+pytest -q              # 단위 테스트 343개 (contracts/desk 포함)
+
+# 사내 PC 용 소스 zip (lib 는 그대로, src 만 교체)
+python3 tools/build_offline_bundle.py --src-only
 ```

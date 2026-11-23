@@ -1,0 +1,82 @@
+{
+  "설명": "설정 화면에 붙여 넣은 CF_Authorization 쿠키 → 정리한 값과 만료 시각(JWT exp, 서명 검증 없이 읽기만). error = empty | not_jwt | no_exp. 만료 기대값은 reporter/src/cookie.ts jwtExpiry 로 계산했습니다. 토큰은 전부 가상입니다 — 서명 자리는 \"fake-signature-not-a-real-token\".",
+  "cases": [
+    {
+      "name": "값만 붙여넣음",
+      "raw": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "앞뒤 공백·줄바꿈",
+      "raw": "  eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg\n",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "이름=값 형태",
+      "raw": "CF_Authorization=eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "쿠키 헤더 통째로",
+      "raw": "theme=dark; CF_Authorization=eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg; other=1",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "따옴표로 감쌈",
+      "raw": "\"eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg\"",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "끝에 세미콜론",
+      "raw": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg;",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJhdWQiOlsiZmFrZS1hdWRpZW5jZSJdLCJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsImV4cCI6MTc5NTU3ODI0MCwiaWF0IjoxNzkyOTg2MjQwLCJ0eXBlIjoiYXBwIn0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-11-25T03:44:00.000Z"
+    },
+    {
+      "name": "한글 이메일이 든 페이로드",
+      "raw": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6Iu2FjOyKpO2EsEBleGFtcGxlLmNvbSIsImV4cCI6MTc5ODE3MDI0MH0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6Iu2FjOyKpO2EsEBleGFtcGxlLmNvbSIsImV4cCI6MTc5ODE3MDI0MH0.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": null,
+      "expires_at": "2026-12-25T03:44:00.000Z"
+    },
+    {
+      "name": "빈 값",
+      "raw": "   ",
+      "normalized": "",
+      "error": "empty",
+      "expires_at": null
+    },
+    {
+      "name": "JWT 가 아님",
+      "raw": "not-a-jwt",
+      "normalized": "not-a-jwt",
+      "error": "not_jwt",
+      "expires_at": null
+    },
+    {
+      "name": "페이로드가 JSON 이 아님",
+      "raw": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.bm90LWpzb24.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.bm90LWpzb24.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": "not_jwt",
+      "expires_at": null
+    },
+    {
+      "name": "exp 가 없음",
+      "raw": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsInR5cGUiOiJhcHAifQ.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "normalized": "eyJhbGciOiJSUzI1NiIsImtpZCI6ImZha2Uta2lkIiwidHlwIjoiSldUIn0.eyJlbWFpbCI6InRlc3RlckBleGFtcGxlLmNvbSIsInR5cGUiOiJhcHAifQ.ZmFrZS1zaWduYXR1cmUtbm90LWEtcmVhbC10b2tlbg",
+      "error": "no_exp",
+      "expires_at": null
+    }
+  ]
+}

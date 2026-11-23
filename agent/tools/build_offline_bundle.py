@@ -7,9 +7,15 @@
 **이 스크립트는 인터넷이 되는 기기(맥 등)에서 돌립니다.** 윈도우용 휠을
 받아 오는 것이지 이 기기에 설치하는 것이 아닙니다.
 
-    python3 tools/build_offline_bundle.py
+    python3 tools/build_offline_bundle.py              # 전체 (라이브러리 포함, 약 70MB)
+    python3 tools/build_offline_bundle.py --src-only   # 소스만 (수십 KB)
 
 산출물: dist-offline/ticket-agent-offline.zip
+        dist-offline/ticket-agent-src-<버전>.zip   (--src-only)
+
+**코드만 바뀌었으면 `--src-only` 로 충분합니다.** 라이브러리(`lib/`)는 그대로 두고
+`src` 폴더만 갈아 끼우는 배포입니다. 의존성(REQUIREMENTS)을 바꿨을 때만 전체를
+다시 만듭니다. 소스만 만들 때는 기존 전체 꾸러미를 지우지 않습니다.
 
 꾸러미 구조:
 
@@ -31,6 +37,8 @@ pywin32 등)은 ABI 가 버전마다 달라서 대신 쓸 수 있는 것이 없�
 
 from __future__ import annotations
 
+import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -79,7 +87,55 @@ def unpack(wheel: Path, target: Path) -> None:
         zf.extractall(target)
 
 
+def agent_version() -> str:
+    """`src/ticket_agent/__init__.py` 의 __version__. 파일 이름에 넣습니다."""
+    text = (AGENT / "src" / "ticket_agent" / "__init__.py").read_text(encoding="utf-8")
+    hit = re.search(r'__version__\s*=\s*"([^"]+)"', text)
+    if not hit:
+        raise SystemExit("__init__.py 에서 __version__ 을 찾지 못했습니다")
+    return hit.group(1)
+
+
+def build_src_only() -> int:
+    """`src/ticket_agent/` + `.env.example` + `READ-ME-FIRST.txt` 만 담습니다.
+
+    사내 PC 에서는 zip 안의 **`src` 폴더만** 설치 폴더에 덮어씁니다. `lib/`·`.env`·
+    `data/` 는 zip 에 없으므로 덮어써질 일이 없습니다 — `.env.example` 은 이름이 달라
+    `.env` 를 건드리지 않습니다. egg-info·캐시는 넣지 않습니다.
+    """
+    version = agent_version()
+    OUT.mkdir(parents=True, exist_ok=True)
+    archive = OUT / f"ticket-agent-src-{version}.zip"
+    if archive.exists():
+        archive.unlink()
+
+    src = AGENT / "src" / "ticket_agent"
+    files = sorted(
+        p
+        for p in src.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"
+    )
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in files:
+            zf.write(path, Path("src") / path.relative_to(AGENT / "src"))
+        zf.write(AGENT / ".env.example", ".env.example")
+        zf.write(AGENT / "tools" / "offline" / "READ-ME-FIRST.txt", "READ-ME-FIRST.txt")
+
+    size_kb = archive.stat().st_size / 1024
+    print(f"  완료: {archive}  ({size_kb:.0f} KB · 소스 {len(files)}개 · 버전 {version})")
+    return 0
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(description="오프라인 꾸러미를 만듭니다")
+    parser.add_argument(
+        "--src-only",
+        action="store_true",
+        help="소스만 담은 zip (lib 는 그대로 두고 src 만 교체하는 배포)",
+    )
+    if parser.parse_args().src_only:
+        return build_src_only()
+
     if OUT.exists():
         shutil.rmtree(OUT)
     BUNDLE.mkdir(parents=True)

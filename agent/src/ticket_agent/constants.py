@@ -1,6 +1,7 @@
 """코드값 상수.
 
 DB check 제약(supabase/schema.sql)과 웹의 src/lib/constants.ts 와 **같은 값**을 씁니다.
+수집 요청 상태(SCAN_REQUEST_*)는 reporter/src/types.ts 에도 있습니다.
 셋 중 하나만 고치면 저장이 실패하므로 세 곳을 함께 수정하세요.
 """
 
@@ -113,3 +114,49 @@ SCAN_OUTCOME_LABELS = {
     "pending": "판단 대기",
     "linked": "후속 연결됨",
 }
+
+
+# ── desk 수집 (schema.sql 25장 · DESIGN.md 14장) ────────────────────────────
+#
+# 아래 값은 저장소 루트 `contracts/desk/constants.json` 과 같아야 합니다 — 에이전트·
+# 웹·reporter 의 테스트가 그 파일을 함께 읽어 확인합니다.
+
+# 수집 요청 상태. schema.sql 25장 check 제약 · web/src/lib/constants.ts 의
+# SCAN_REQUEST_STATUSES · reporter/src/types.ts 의 같은 이름과 **같은 값**입니다.
+# 웹이 pending 으로 넣고, 에이전트가 running → done·failed 로 옮깁니다.
+SCAN_REQUEST_PENDING = "pending"
+SCAN_REQUEST_RUNNING = "running"
+SCAN_REQUEST_DONE = "done"
+SCAN_REQUEST_FAILED = "failed"
+SCAN_REQUEST_STATUSES = (
+    SCAN_REQUEST_PENDING,
+    SCAN_REQUEST_RUNNING,
+    SCAN_REQUEST_DONE,
+    SCAN_REQUEST_FAILED,
+)
+
+#: 집어 간 뒤 이만큼 지나도 안 끝났으면 죽은 것으로 봅니다. 웹 SCAN_STALE_MINUTES 와 같습니다
+DESK_STALE_RUNNING_MINUTES = 10
+#: 스캔 한 번의 상한. 화면은 2분까지만 기다립니다
+DESK_SCAN_TIMEOUT_SECONDS = 180
+#: 쿠키 만료를 이 일수 전부터 알립니다 (doctor · 웹 배너)
+DESK_EXPIRY_WARN_DAYS = 7
+
+# desk 인증 비밀값의 이름 (app_secrets). 웹의 web/src/lib/deskAuth.ts 와 같습니다.
+DESK_COOKIE_SECRET = "desk_cf_authorization"
+DESK_CLIENT_ID_SECRET = "desk_cf_client_id"
+DESK_CLIENT_SECRET_SECRET = "desk_cf_client_secret"
+
+# 에이전트가 적고 웹이 읽는 desk 상태 (app_settings · 비밀이 아닌 값만).
+DESK_SETTING_AUTH_SOURCE = "desk_auth_source"
+DESK_SETTING_COOKIE_EXPIRES_AT = "desk_cookie_expires_at"
+DESK_SETTING_LAST_SCAN_AT = "desk_last_scan_at"
+DESK_SETTING_LAST_SCAN_OK = "desk_last_scan_ok"
+DESK_SETTING_LAST_SCAN_NOTE = "desk_last_scan_note"
+
+# 어느 인증을 쓰는가. 웹은 service_token 이면 쿠키 만료 배너를 띄우지 않습니다.
+DESK_AUTH_SERVICE_TOKEN = "service_token"
+DESK_AUTH_SETTINGS = "settings"
+DESK_AUTH_ENV = "env"
+DESK_AUTH_NONE = "none"
+DESK_AUTH_SOURCES = (DESK_AUTH_SERVICE_TOKEN, DESK_AUTH_SETTINGS, DESK_AUTH_ENV, DESK_AUTH_NONE)

@@ -1,8 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 
-import { usePendingScanCount } from '../hooks/queries'
+import { usePendingScanCount, useSettings } from '../hooks/queries'
 import { useAuth } from '../hooks/useAuth'
 import { ROLE_LABELS } from '../lib/constants'
+import { deskAuthNotice, readDeskStatus } from '../lib/deskAuth'
 
 const NAV = [
   { to: '/', label: '보드', end: true },
@@ -117,8 +118,38 @@ export default function Layout() {
       </header>
 
       <main className="mx-auto max-w-7xl px-4 py-6">
+        <DeskAuthBanner isAdmin={isAdmin} />
         <Outlet />
       </main>
+    </div>
+  )
+}
+
+/**
+ * desk 쿠키 만료 배너 — 만료 7일 전부터, 만료됐거나 인증이 없으면 계속.
+ *
+ * 만료를 놓쳐 desk 수집이 11~12일씩 빈 적이 두 번 있습니다. 그동안 주간보고서는
+ * 묵은 스냅샷으로 멀쩡해 보였습니다. 쿠키는 관리자만 바꿀 수 있지만, 보고서는 누구나
+ * 만들므로 **모두에게** 띄웁니다. 판단은 `deskAuth.deskAuthNotice` 순수 함수입니다.
+ */
+function DeskAuthBanner({ isAdmin }: { isAdmin: boolean }) {
+  const { data: settings = [] } = useSettings()
+  const notice = deskAuthNotice(readDeskStatus(settings), Date.now())
+  if (!notice) return null
+  const tone =
+    notice.level === 'error'
+      ? 'bg-rose-50 text-rose-800 ring-rose-200'
+      : 'bg-amber-50 text-amber-800 ring-amber-200'
+  return (
+    <div className={`mb-4 rounded-lg px-3 py-2 text-xs leading-relaxed ring-1 ${tone}`} role="status">
+      {notice.text}{' '}
+      {isAdmin ? (
+        <Link to="/settings" className="font-medium underline">
+          설정 → desk 인증에서 새 쿠키 넣기
+        </Link>
+      ) : (
+        '관리자에게 알려 주세요.'
+      )}
     </div>
   )
 }
